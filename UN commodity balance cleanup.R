@@ -544,10 +544,10 @@ ras_fuel_outputs <- UN_energy_stats_intermediate[
 # EXPORT
 # =========================================================
 
-fwrite(ras_fuel_outputs, "T:/Latest datasets/01.Raw data needing conversion/UN.Commodity balance/UN Commodity Balance Cleanup/ras_fuel_outputs.csv")
+fwrite(ras_fuel_outputs, "T:/Latest datasets/01.Raw data needing conversion/UN.Commodity balance/ras_fuel_outputs.csv")
 
-fwrite(ras_plant_inputs, "T:/Latest datasets/01.Raw data needing conversion/UN.Commodity balance/UN Commodity Balance Cleanup/ras_plant_inputs.csv")
+fwrite(ras_plant_inputs, "T:/Latest datasets/01.Raw data needing conversion/UN.Commodity balance/ras_plant_inputs.csv")
 
-fwrite(ras_plant_outputs, "T:/Latest datasets/01.Raw data needing conversion/UN.Commodity balance/UN Commodity Balance Cleanup/ras_plant_outputs.csv")
+fwrite(ras_plant_outputs, "T:/Latest datasets/01.Raw data needing conversion/UN.Commodity balance/ras_plant_outputs.csv")
 
-fwrite(UN_energy_stats_intermediate, "T:/Latest datasets/01.Raw data needing conversion/UN.Commodity balance/UN Commodity Balance Cleanup/UN_energy_stats_intermediate.csv")
+fwrite(UN_energy_stats_intermediate, "T:/Latest datasets/01.Raw data needing conversion/UN.Commodity balance/UN_energy_stats_intermediate.csv")

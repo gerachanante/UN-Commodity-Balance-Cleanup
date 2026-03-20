@@ -17,11 +17,11 @@ $set ParameterData      parameters-UNRAS.xlsm
 $set SetsGDX            sets.gdx
 $set ParameterGDX       parameters.gdx
 $set ResultsGDX         ras-results.gdx
-$set ResultsXLSXpath    T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance Cleanup
+$set ResultsXLSXpath    T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance\ Cleanup
 
 *------------------------------- SETS -------------------------------*
 Sets
-    t      time /1990*2023/
+    t      time /2007*2023/
 *    t      time /2022/
     iso    ISO3 code for countries
     p      process codes matching TRANSACTION in UN COMBAL
@@ -55,7 +55,6 @@ Sets
 * pre-solve flags
     unsupported_plant_output(iso,t,p2,f)
     unsupported_fuel_output(iso,t,p3,f)
-    no_input_mapping(p2,p3,f2)     "flag: no valid input-side mapping exists for this output"
 
 * post-solve flags
     plant_missing_output(iso,t,p1) "if plant has input but zero allocated output"
@@ -64,8 +63,9 @@ Sets
 ;
 
 Scalars
-    penalty_weight_seed_deviation /1e3/
-    penalty_weight_efficiency_excess /1e7/
+    penalty_weight_seed_deviation /1e5/
+    penalty_weight_efficiency_excess /1e10/
+    penalty_weight_plant_anchor /1e8/
     consistency_tolerance /1e-6/
 ;
 
@@ -89,7 +89,8 @@ Parameters
     seed_allocated_output(iso,t,p1,f1,p2,p3,f2)
     seed_deviation_weight(iso,t,p1,f1,p2,p3,f2)
     share_seed_deviation
-
+    seed_plant_output_target(iso,t,p1)      "target total output by plant implied by seed"
+    plant_anchor_weight(iso,t,p1)           "relative weight for plant-level anchor"
     plant_input_total(iso,t,p1)             "total combustible input by detailed plant"
     plant_output_total(iso,t,p1)            "allocated output by detailed plant"
     plant_output_electricity(iso,t,p1)      "allocated electricity output by detailed plant"
@@ -205,160 +206,8 @@ new_plant_rows(iter) = 0;
 new_fuel_rows(iter)  = 0;
 
 
-loop(iter,
 
-*-------------------------------*
-* STEP A: suggest missing plant_map rows
-* require:
-*   - actual detailed input exists
-*   - actual aggregate plant output exists
-*   - actual aggregate fuel-output exists
-*   - current fuel_map_used already supports f1 -> p3
-*   - p1 and p2 belong to same plant family
-*-------------------------------*
-    suggest_plant_map(p1,p2,p3) = no;
 
-    suggest_plant_map(p1,p2,p3)$[
-           not plant_map_used(p1,p2,p3)
-       and sum((iso,t,f1,f2)$[
-                  iso_t_active(iso,t)
-              and plant_input(iso,t,p1,f1)
-              and plant_output(iso,t,p2,f2)
-              and abs(fuel_output_balanced(iso,t,p3,f2)) gt 0
-              and fuel_map_used(f1,p3)
-
-* same plant family only
-              and (
-                     (pe(p1) and pe(p2))
-                  or (pc(p1) and pc(p2))
-                  or (ph(p1) and ph(p2))
-                  )
-
-* output compatibility
-              and (
-                     (fe(f2) and (pe(p2) or pc(p2)) and (pe(p1) or pc(p1)))
-                  or (fh(f2) and (ph(p2) or pc(p2)) and (ph(p1) or pc(p1)))
-                  )
-            ], 1)
-    ] = yes;
-
-    suggest_plant_map_count(p1,p2,p3)$suggest_plant_map(p1,p2,p3) =
-        sum((iso,t,f1,f2)$[
-               iso_t_active(iso,t)
-           and plant_input(iso,t,p1,f1)
-           and plant_output(iso,t,p2,f2)
-           and abs(fuel_output_balanced(iso,t,p3,f2)) gt 0
-           and fuel_map_used(f1,p3)
-           and (
-                  (pe(p1) and pe(p2))
-               or (pc(p1) and pc(p2))
-               or (ph(p1) and ph(p2))
-               )
-           and (
-                  (fe(f2) and (pe(p2) or pc(p2)) and (pe(p1) or pc(p1)))
-               or (fh(f2) and (ph(p2) or pc(p2)) and (ph(p1) or pc(p1)))
-               )
-        ], 1);
-
-    new_plant_rows(iter) =
-        sum((p1,p2,p3)$[suggest_plant_map(p1,p2,p3) and not plant_map_used(p1,p2,p3)], 1);
-
-    plant_map_used(p1,p2,p3)$suggest_plant_map(p1,p2,p3) = yes;
-
-*-------------------------------*
-* STEP B: suggest missing fuel_map rows
-* require:
-*   - actual detailed input exists
-*   - actual aggregate plant output exists
-*   - actual aggregate fuel-output exists
-*   - current plant_map_used already supports p1 -> p2 -> p3
-*-------------------------------*
-    suggest_fuel_map(f1,p3) = no;
-
-    suggest_fuel_map(f1,p3)$[
-           not fuel_map_used(f1,p3)
-       and sum((iso,t,p1,p2,f2)$[
-                  iso_t_active(iso,t)
-              and plant_input(iso,t,p1,f1)
-              and plant_output(iso,t,p2,f2)
-              and abs(fuel_output_balanced(iso,t,p3,f2)) gt 0
-              and plant_map_used(p1,p2,p3)
-
-* same plant family implicit through plant_map_used, but still enforce output compatibility
-              and (
-                     (fe(f2) and (pe(p2) or pc(p2)) and (pe(p1) or pc(p1)))
-                  or (fh(f2) and (ph(p2) or pc(p2)) and (ph(p1) or pc(p1)))
-                  )
-            ], 1)
-    ] = yes;
-
-    suggest_fuel_map_count(f1,p3)$suggest_fuel_map(f1,p3) =
-        sum((iso,t,p1,p2,f2)$[
-               iso_t_active(iso,t)
-           and plant_input(iso,t,p1,f1)
-           and plant_output(iso,t,p2,f2)
-           and abs(fuel_output_balanced(iso,t,p3,f2)) gt 0
-           and plant_map_used(p1,p2,p3)
-           and (
-                  (fe(f2) and (pe(p2) or pc(p2)) and (pe(p1) or pc(p1)))
-               or (fh(f2) and (ph(p2) or pc(p2)) and (ph(p1) or pc(p1)))
-               )
-        ], 1);
-
-    new_fuel_rows(iter) =
-        sum((f1,p3)$[suggest_fuel_map(f1,p3) and not fuel_map_used(f1,p3)], 1);
-
-    fuel_map_used(f1,p3)$suggest_fuel_map(f1,p3) = yes;
-);
-
-no_input_mapping(p2,p3,f2)$[sum((iso,t)$[iso_t_active(iso,t)
-   and plant_output(iso,t,p2,f2)
-   and abs(fuel_output_balanced(iso,t,p3,f2)) gt 0], 1)
-   and not sum((iso,t,p1,f1)$[
-           plant_input(iso,t,p1,f1)
-       and plant_map_used(p1,p2,p3)
-       and fuel_map_used(f1,p3)
-   ], 1)
-] = yes;
-
-*------------------------------- ALLOCATION DOMAIN -------------------------------*
-allocation_domain(iso,t,p1,f1,p2,p3,f2)$[
-       iso_t_active(iso,t)
-    and plant_output(iso,t,p2,f2)
-    and abs(fuel_output_balanced(iso,t,p3,f2)) gt 0
-
-* fuel compatibility ALWAYS required
-    and fuel_map_used(f1,p3)
-
-* plant type compatibility ALWAYS required
-    and (
-           (pe(p1) and pe(p2))
-        or (pc(p1) and pc(p2))
-        or (ph(p1) and ph(p2))
-    )
-
-* output compatibility
-    and (
-           (fe(f2) and (pe(p1) or pc(p1)))
-        or (fh(f2) and (ph(p1) or pc(p1)))
-    )
-
-* NORMAL mapping
-    and (
-           plant_map_used(p1,p2,p3)
-
-* fallback ONLY if absolutely no mapping exists
-        or (
-               no_input_mapping(p2,p3,f2)
-           and total_input(iso,t,p1) gt 0
-           and sum((p1a,f1a)$[
-                   plant_input(iso,t,p1a,f1a)
-               and plant_map_used(p1a,p2,p3)
-               and fuel_map_used(f1a,p3)
-           ],1) = 0
-        )
-    )
-] = yes;
 
 *=====================================================================*
 * BEFORE-SOLVE DIAGNOSTICS                                            *
@@ -449,6 +298,72 @@ pre_used_support_fuel(iso,t,p3,f2)$[abs(fuel_output_balanced(iso,t,p3,f2)) gt 0]
            )
     ], 1);
 
+
+
+pre_structural_infeasibility(iso,t,p2,p3,f2)$[
+       iso_t_active(iso,t)
+   and plant_output(iso,t,p2,f2)
+   and abs(fuel_output_balanced(iso,t,p3,f2)) gt 0
+   and not sum((p1,f1)$[
+           plant_input(iso,t,p1,f1)
+       and plant_map(p1,p2,p3)
+       and fuel_map(f1,p3)
+
+* plant family consistency
+       and (
+              (pe(p1) and pe(p2))
+           or (pc(p1) and pc(p2))
+           or (ph(p1) and ph(p2))
+           )
+
+* output compatibility
+       and (
+              (fe(f2) and (pe(p1) or pc(p1)))
+           or (fh(f2) and (ph(p1) or pc(p1)))
+           )
+   ], 1)
+] = 1;
+
+*------------------------------- ALLOCATION DOMAIN -------------------------------*
+allocation_domain(iso,t,p1,f1,p2,p3,f2)$[
+       iso_t_active(iso,t)
+    and plant_output(iso,t,p2,f2)
+    and abs(fuel_output_balanced(iso,t,p3,f2)) gt 0
+
+* fuel compatibility always required
+    and fuel_map(f1,p3)
+
+* plant family consistency
+    and (
+           (pe(p1) and pe(p2))
+        or (pc(p1) and pc(p2))
+        or (ph(p1) and ph(p2))
+    )
+
+* output compatibility
+    and (
+           (fe(f2) and (pe(p1) or pc(p1)))
+        or (fh(f2) and (ph(p1) or pc(p1)))
+    )
+
+*----------------------------------*
+* STRICT OR LOCAL REPAIR ONLY      *
+*----------------------------------*
+    and (
+           plant_map(p1,p2,p3)
+
+        or (
+               pre_structural_infeasibility(iso,t,p2,p3,f2)
+           and plant_input(iso,t,p1,f1)
+        )
+    )
+] = yes;
+
+pre_domain_support_plant(iso,t,p2,f2) = 0;
+pre_domain_support_fuel(iso,t,p3,f2)  = 0;
+unsupported_plant_output(iso,t,p2,f2) = no;
+unsupported_fuel_output(iso,t,p3,f2)  = no;
+
 pre_domain_support_plant(iso,t,p2,f2)$plant_output(iso,t,p2,f2) =
     sum((p1,f1,p3)$allocation_domain(iso,t,p1,f1,p2,p3,f2), 1);
 
@@ -464,16 +379,6 @@ unsupported_fuel_output(iso,t,p3,f2)$[
        abs(fuel_output_balanced(iso,t,p3,f2)) gt 0
    and not pre_domain_support_fuel(iso,t,p3,f2)
 ] = yes;
-    
-pre_structural_infeasibility(iso,t,p2,p3,f2)$[
-       plant_output(iso,t,p2,f2)
-   and abs(fuel_output_balanced(iso,t,p3,f2)) gt 0
-   and not sum((p1,f1)$[
-           plant_input(iso,t,p1,f1)
-       and plant_map(p1,p2,p3)
-       and fuel_map(f1,p3)
-   ], 1)
-] = 1;
 *------------------------------- PLANT INPUT TOTAL -------------------------------*
 plant_input_total(iso,t,p1)$iso_t_active(iso,t) =
     sum(f, abs(plant_input(iso,t,p1,f)));
@@ -503,6 +408,39 @@ seed_total_output(iso,t,p1,f1,f2)$[
   * total_plant_output(iso,t,f2)
   / max(1e-9, sum(ff$(fe(ff) or fh(ff)), total_plant_output(iso,t,ff)));
 
+
+seed_plant_output_target(iso,t,p1) = 0;
+
+* Electricity plants: anchor within electricity family only
+seed_plant_output_target(iso,t,p1)$[
+       total_input(iso,t,p1) gt 0
+   and pe(p1)
+] =
+    total_input(iso,t,p1)
+  / max(1e-9, sum(p1a$pe(p1a), total_input(iso,t,p1a)))
+  * sum((p2,f2)$[pe(p2) and fe(f2)], plant_output(iso,t,p2,f2));
+
+* Heat plants: anchor within heat family only
+seed_plant_output_target(iso,t,p1)$[
+       total_input(iso,t,p1) gt 0
+   and ph(p1)
+] =
+    total_input(iso,t,p1)
+  / max(1e-9, sum(p1a$ph(p1a), total_input(iso,t,p1a)))
+  * sum((p2,f2)$[ph(p2) and fh(f2)], plant_output(iso,t,p2,f2));
+
+* CHP plants: anchor within CHP family only
+seed_plant_output_target(iso,t,p1)$[
+       total_input(iso,t,p1) gt 0
+   and pc(p1)
+] =
+    total_input(iso,t,p1)
+  / max(1e-9, sum(p1a$pc(p1a), total_input(iso,t,p1a)))
+  * sum((p2,f2)$[pc(p2) and (fe(f2) or fh(f2))], plant_output(iso,t,p2,f2));
+
+plant_anchor_weight(iso,t,p1) = 1;
+
+
 seed_allocated_output(iso,t,p1,f1,p2,p3,f2) = 0;
 
 seed_allocated_output(iso,t,p1,f1,p2,p3,f2)$allocation_domain(iso,t,p1,f1,p2,p3,f2) =
@@ -524,7 +462,7 @@ seed_deviation_weight(iso,t,p1,f1,p2,p3,f2)$allocation_domain(iso,t,p1,f1,p2,p3,
 * penalty: missing manual fuel map
         + 50$[not fuel_map(f1,p3)]
 * penalty: fallback case (no input mapping)
-        + 5000$[iso_t_active(iso,t)*no_input_mapping(p2,p3,f2)]
+        + 5000$[pre_structural_infeasibility(iso,t,p2,p3,f2)]
       );
 
 *------------------------------- EXPORT BEFORE-SOLVE PACKAGE -------------------------------*
@@ -535,6 +473,7 @@ Positive Variables
     v_allocated_output(iso,t,p1,f1,p2,p3,f2)
     v_seed_deviation(iso,t,p1,f1,p2,p3,f2)
     v_efficiency_excess(iso,t,p1)
+    v_plant_output_deviation(iso,t,p1)
 ;
 
 Variable z;
@@ -549,15 +488,23 @@ Equations
     eq_total_output_efficiency_upper_bound
     eq_seed_deviation_upper
     eq_seed_deviation_lower
+    eq_plant_output_anchor_upper
+    eq_plant_output_anchor_lower
     eq_objective
 ;
 
-eq_plant_balance(iso,t,p2,f2)$plant_output(iso,t,p2,f2)..
+eq_plant_balance(iso,t,p2,f2)$[
+       plant_output(iso,t,p2,f2)
+   and pre_domain_support_plant(iso,t,p2,f2)
+]..
     sum((p1,f1,p3)$allocation_domain(iso,t,p1,f1,p2,p3,f2),
         v_allocated_output(iso,t,p1,f1,p2,p3,f2))
     =e= plant_output(iso,t,p2,f2);
 
-eq_fuel_balance(iso,t,p3,f2)$abs(fuel_output_balanced(iso,t,p3,f2))..
+eq_fuel_balance(iso,t,p3,f2)$[
+       abs(fuel_output_balanced(iso,t,p3,f2)) gt 0
+   and pre_domain_support_fuel(iso,t,p3,f2)
+]..
     sum((p1,f1,p2)$allocation_domain(iso,t,p1,f1,p2,p3,f2),
         v_allocated_output(iso,t,p1,f1,p2,p3,f2))
     =e= fuel_output_balanced(iso,t,p3,f2);
@@ -580,13 +527,41 @@ eq_seed_deviation_lower(iso,t,p1,f1,p2,p3,f2)$allocation_domain(iso,t,p1,f1,p2,p
   - v_allocated_output(iso,t,p1,f1,p2,p3,f2)
     =l= v_seed_deviation(iso,t,p1,f1,p2,p3,f2);
 
+eq_plant_output_anchor_upper(iso,t,p1)$[
+       total_input(iso,t,p1) gt 0
+   and seed_plant_output_target(iso,t,p1) gt 0
+]..
+    sum((f1,p2,p3,f2)$allocation_domain(iso,t,p1,f1,p2,p3,f2),
+        v_allocated_output(iso,t,p1,f1,p2,p3,f2))
+  - seed_plant_output_target(iso,t,p1)
+    =l= v_plant_output_deviation(iso,t,p1);
+
+eq_plant_output_anchor_lower(iso,t,p1)$[
+       total_input(iso,t,p1) gt 0
+   and seed_plant_output_target(iso,t,p1) gt 0
+]..
+    seed_plant_output_target(iso,t,p1)
+  - sum((f1,p2,p3,f2)$allocation_domain(iso,t,p1,f1,p2,p3,f2),
+        v_allocated_output(iso,t,p1,f1,p2,p3,f2))
+    =l= v_plant_output_deviation(iso,t,p1);
+    
 eq_objective..
     z =e= penalty_weight_seed_deviation
        * sum((iso,t,p1,f1,p2,p3,f2)$allocation_domain(iso,t,p1,f1,p2,p3,f2),
-             seed_deviation_weight(iso,t,p1,f1,p2,p3,f2) * v_seed_deviation(iso,t,p1,f1,p2,p3,f2))
+             seed_deviation_weight(iso,t,p1,f1,p2,p3,f2)
+           * v_seed_deviation(iso,t,p1,f1,p2,p3,f2))
+
+       + penalty_weight_plant_anchor
+       * sum((iso,t,p1)$[
+                total_input(iso,t,p1) gt 0
+            and seed_plant_output_target(iso,t,p1) gt 0
+             ],
+             plant_anchor_weight(iso,t,p1)
+           * v_plant_output_deviation(iso,t,p1))
+
        + penalty_weight_efficiency_excess
        * sum((iso,t,p1)$[total_input(iso,t,p1) gt 0],
-             10*v_efficiency_excess(iso,t,p1));
+             10 * v_efficiency_excess(iso,t,p1));
 
 *------------------------------- MODEL -------------------------------*
 Model plant_allocation /All/;
@@ -624,7 +599,6 @@ Parameters
 *------------------------------- MAPPING / STRUCTURE DIAGNOSTICS -------------------------------*
     post_diag_manual_map_share(iso,t,p2,p3,f2)           "share of allocated flow using manual plant_map and fuel_map"
     post_diag_augmented_map_share(iso,t,p2,p3,f2)        "share of allocated flow using at least one suggested mapping"
-    post_diag_fallback_share(iso,t,p2,p3,f2)             "share of allocated flow coming from no_input_mapping fallback"
     post_diag_missing_manual_plant_map_flow(iso,t,p1,p2,p3,f2) "allocated flow that relied on suggested plant_map"
     post_diag_missing_manual_fuel_map_flow(iso,t,p1,f1,p3,f2)  "allocated flow that relied on suggested fuel_map"
     post_diag_suggest_plant_map_priority(p1,p2,p3)       "total allocated flow supported by suggested plant_map row"
@@ -745,17 +719,6 @@ post_diag_augmented_map_share(iso,t,p2,p3,f2)$[
         sum((p1,f1)$allocation_domain(iso,t,p1,f1,p2,p3,f2),
             post_out_allocated_output(iso,t,p1,f1,p2,p3,f2)));
 
-post_diag_fallback_share(iso,t,p2,p3,f2)$[
-       abs(fuel_output_balanced(iso,t,p3,f2)) gt 0
-   and plant_output(iso,t,p2,f2)
-] =
-    sum((p1,f1)$allocation_domain(iso,t,p1,f1,p2,p3,f2),
-        post_out_allocated_output(iso,t,p1,f1,p2,p3,f2)
-      $ no_input_mapping(p2,p3,f2)
-    )
-  / max(1e-9,
-        sum((p1,f1)$allocation_domain(iso,t,p1,f1,p2,p3,f2),
-            post_out_allocated_output(iso,t,p1,f1,p2,p3,f2)));
 
 post_diag_missing_manual_plant_map_flow(iso,t,p1,p2,p3,f2)$[
        not plant_map(p1,p2,p3)
@@ -820,9 +783,7 @@ post_diag_flag_extreme_efficiency(iso,t,p1)$[
    and post_out_plant_efficiency_total(iso,t,p1) > 1.5
 ] = post_out_plant_efficiency_total(iso,t,p1);
 
-post_diag_flag_high_fallback(iso,t,p2,p3,f2)$[
-       post_diag_fallback_share(iso,t,p2,p3,f2) > 0.9
-] = post_diag_fallback_share(iso,t,p2,p3,f2);
+
 
 plant_missing_output(iso,t,p1)$[
        total_input(iso,t,p1) gt 0
@@ -853,12 +814,7 @@ post_kpi_total_efficiency_excess =
     sum((iso,t,p1)$[total_input(iso,t,p1) gt 0],
         v_efficiency_excess.l(iso,t,p1));
 
-post_kpi_total_fallback_share =
-    sum((iso,t,p2,p3,f2)$post_diag_fallback_share(iso,t,p2,p3,f2),
-        post_diag_fallback_share(iso,t,p2,p3,f2))
-    / max(1e-9,
-        sum((iso,t,p2,p3,f2),
-            1$[post_diag_fallback_share(iso,t,p2,p3,f2)]));
+
 
 post_kpi_total_augmented_share =
     sum((iso,t,p2,p3,f2),
@@ -896,5 +852,5 @@ abort$(smax((iso,t,p3,f)$abs(fuel_output_balanced(iso,t,p3,f)),
 
 *------------------------------- EXPORT -------------------------------*
 execute_unload '%ResultsGDX%'
-$call gdxdump %ResultsGDX% output="%ResultsXLSXpath%allocated_output.csv" symb=post_out_allocated_output_export format=csv
+$call gdxdump %ResultsGDX% output="allocated_output.csv" symb=post_out_allocated_output_export format=csv
 *$call gdxdump %ResultsGDX% output="%ResultsXLSXpath%allocated_output.csv" symb=post_out_allocated_output format=csv

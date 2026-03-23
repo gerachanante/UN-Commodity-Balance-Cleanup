@@ -555,34 +555,34 @@ The script exports four CSV files to the staging folder:
 
 ---
 
-# Updated Flow Summary
+# Flow Summary
 
-Raw CSV + Excel lookups  
-        ↓  
-Type stabilization  
-        ↓  
-Drop empty rows  
-        ↓  
-Deduplicate lookup tables  
-        ↓  
-Prepare rules and NCV keys  
-        ↓  
-Clean balance (drop zeros, normalize units, commodity fixes)  
-        ↓  
-Map products and transactions  
-        ↓  
-Apply sign logic  
-   - transaction sign metadata  
-   - commodity-transaction sign_switch overrides  
-        ↓  
-Map ISO3 and NCVs  
-        ↓  
-Select NCV and compute TJ/PJ  
-        ↓  
-Apply transformation rules to generate added rows  
-        ↓  
-Standardize schema and stack original + added rows  
-        ↓  
-Extract RAS subsets  
-        ↓  
+Raw CSV + Excel lookups
+        ↓
+Type stabilization
+        ↓
+Drop empty rows
+        ↓
+Deduplicate lookup tables
+        ↓
+Prepare rules and NCV keys
+        ↓
+Clean balance (drop zeros, normalize units, commodity fixes)
+        ↓
+Map products and transactions
+        ↓
+Apply sign logic
+   - transaction sign metadata
+   - commodity-transaction sign_switch overrides
+        ↓
+Map ISO3 and NCVs
+        ↓
+Select NCV and compute TJ/PJ
+        ↓
+Apply transformation rules to generate added rows
+        ↓
+Standardize schema and stack original + added rows
+        ↓
+Extract RAS subsets
+        ↓
 Export CSVs

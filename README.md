@@ -1,4 +1,4 @@
-The script processes UN energy statistics data — specifically a commodity balance dataset — and transforms it into a cleaned, enriched, energy-converted intermediate dataset ready for further analysis (likely for building energy balances, e.g. in the style of IEA or IRENA).
+The script processes UN energy statistics data, specifically the commodity balance, and transforms it into a cleaned, enriched, energy-converted intermediate dataset ready for further analysis
 
 ## 1. Helper Functions
 

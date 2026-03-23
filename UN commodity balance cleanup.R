@@ -26,7 +26,6 @@ read_excel_table <- function(path, table_name) {
   as.data.table(wb_to_df(wb, named_region = table_name)) # Extract named table and convert to data.table
 }
 
-
 # ---------------------------------------------------------
 # first_non_blank
 # ---------------------------------------------------------
@@ -70,11 +69,15 @@ transactions    <- read_excel_table("T:/Indexes/UN.Energy data codes.xlsx", "Tra
 # Country mapping: UN country names -> ISO3 codes
 country_cleanup <- read_excel_table("T:/Indexes/Countries.xlsx", "CountryCleanup")
 
+# Country master file
+countries <- read_excel_table("T:/Indexes/Countries.xlsx", "Countries")
+
 # Country-specific NCV factors (higher priority than generic NCV)
 UN_NCV  <- as.data.table(read_excel("T:/Latest datasets/UN.NCV.xlsx", sheet = "Long format"))
 
 # Main UN energy balance dataset (raw input)
 balance <- fread("T:/Latest datasets/UN.Commodity balance.csv", blank.lines.skip = TRUE)
+
 
 
 # =========================================================
@@ -126,6 +129,12 @@ country_cleanup[, `:=`(
   Name = as.character(Name),
   ISO3 = as.character(ISO3)
 )]
+
+# Clean country table
+countries <- unique(countries[, .(
+  ISO3 = as.character(ISO3),
+  REF_AREA = as.character(M49)
+)])
 
 # Clean NCV table
 UN_NCV[, `:=`(
@@ -575,6 +584,7 @@ for (nm in setdiff(final_cols, names(commodity_transformations))) {
   commodity_transformations[, (nm) := NA]
 }
 commodity_transformations <- commodity_transformations[, ..final_cols]
+
 # =========================================================
 # STACK ORIGINAL + TRANSFORMED
 # =========================================================
@@ -589,20 +599,20 @@ UN_energy_stats_intermediate <- rbindlist(
 # RAS INPUT PREPARATION
 # =========================================================
 
-ras_plant_inputs <- UN_energy_stats_intermediate[
+RAS_plant_inputs <- UN_energy_stats_intermediate[
   io == "in" &
     `MERGE category` %in% c("CHP plants", "Electricity plants", "Heat plants") &
     `Combustible plant` == "Yes" &
     TJ != 0
 ]
 
-ras_plant_outputs <- UN_energy_stats_intermediate[
+RAS_plant_outputs <- UN_energy_stats_intermediate[
   io == "out" &
     TRANSACTION %in% c("015CC", "016CC", "015CE", "016CE", "015CH", "016CH") &
     TJ != 0
 ]
 
-ras_fuel_outputs <- UN_energy_stats_intermediate[
+RAS_fuel_outputs <- UN_energy_stats_intermediate[
   io == "out" &
     `MERGE category` %in% c("Electricity and heat") &
     `Combustible plant` == "Yes" &
@@ -616,7 +626,149 @@ ras_fuel_outputs <- UN_energy_stats_intermediate[
 # EXPORT
 # =========================================================
 
-fwrite(ras_fuel_outputs, paste0(path_out,"ras_fuel_outputs.csv"))
-fwrite(ras_plant_inputs, paste0(path_out,"ras_plant_inputs.csv"))
-fwrite(ras_plant_outputs, paste0(path_out,"ras_plant_outputs.csv"))
+fwrite(RAS_fuel_outputs, paste0(path_out,"RAS_fuel_outputs.csv"))
+fwrite(RAS_plant_inputs, paste0(path_out,"RAS_plant_inputs.csv"))
+fwrite(RAS_plant_outputs, paste0(path_out,"RAS_plant_outputs.csv"))
 fwrite(UN_energy_stats_intermediate, paste0(path_out,"UN_energy_stats_intermediate.csv"))
+
+
+# =========================================================
+# PART II. Complete energy balance rebuild
+# =========================================================
+
+# When updating power plant data or for new years of data, the RAS optimisation should be run in GAMS. 
+
+# The output of the optimisation is what we will now import and append to the UN_energy_stats_intermediate to create a final UN_energy_stats file.
+
+# RAS optimisation output. Load after running GAMS when updating data
+RAS_out <- fread(file.path(path_out, "allocated_output.csv"))
+
+# =========================================================
+# RAS OUTPUT STANDARDISATION
+# =========================================================
+
+# The optimisation output only has a few columns. We recreate here the database columns before appending.
+RAS_out <- RAS_out[
+  , .(
+    ISO3      = iso,
+    Year      = t,
+    `Transaction description` = p1,
+    Product   = f2,
+    OBS_VALUE = Val
+  )
+]
+
+# Energy (already in TJ implicitly)
+RAS_out[, `:=`(
+  TJ = OBS_VALUE,
+  PJ = OBS_VALUE / 1000
+)]
+
+# =========================================================
+# JOIN LOOKUPS (REUSE SAME OBJECTS FROM MAIN SCRIPT)
+# =========================================================
+
+# Country lookup
+RAS_out <- merge(
+  RAS_out,
+  countries[, .(ISO3, REF_AREA)],
+  by = "ISO3",
+  all.x = TRUE,
+  sort = FALSE
+)
+
+# Product_cleanup → ProdCode
+RAS_out <- merge(
+  RAS_out,
+  prod_cleanup[, .(`Product Messy`, ProdCode)],
+  by.x = "Product",
+  by.y = "Product Messy",
+  all.x = TRUE,
+  sort = FALSE
+)
+
+# Products → UNSD NCV
+RAS_out <- merge(
+  RAS_out,
+  products[, .(ProdCode, `UNSD NCV (TJ/kt)`)],
+  by = "ProdCode",
+  all.x = TRUE,
+  sort = FALSE
+)
+
+# Add Commodity code
+RAS_out[ProdCode == "700000", COMMODITY := "7000"]
+RAS_out[ProdCode == "800000", COMMODITY := "8000"]
+
+# Transaction metadata
+RAS_out <- merge(
+  RAS_out,
+  transactions[, .(
+    `Transaction name`,
+    `Transaction code`,
+    `MERGE category`,
+    `NCV type`
+  )],
+  by.x = "Transaction description",
+  by.y = "Transaction name",
+  all.x = TRUE,
+  sort = FALSE
+)
+
+setnames(RAS_out, "Transaction code", "TRANSACTION")
+
+# =========================================================
+# STRUCTURAL FIELDS
+# =========================================================
+
+RAS_out[, `:=`(
+  TIME_PERIOD         = Year,
+  UNIT_MEASURE        = "TJ",
+  CONVERSION_FACTOR   = NA_real_,
+  OBS_VALUE_PREV      = NA_real_,
+  COMMODITY_ORIGINAL  = COMMODITY,
+  `Factor to TJE`     = NA_real_,
+  `NCV (TJ/kt)`       = `UNSD NCV (TJ/kt)`,
+  NCV_SOURCE          = "NONE",
+  `NCV-ID`            = "NONE",
+  OBS_STATUS          = "E",
+  DATAFLOW            = "UNSD:DF_UNDATA_ENERGY(1.2)",
+  FREQ                = "A",
+  `TJ UN`             = NA_real_,
+  UNIT_MULT           = 1L,
+  `TJ diff`           = NA_real_,
+  `PJ UN`             = NA_real_,
+  `Data source`       = "RAS optimisation",
+  Rule                = "RAS optimisation",
+  io                  = "out"
+)]
+
+
+# ---------------------------------------------------------
+# ENFORCE FINAL SCHEMA
+# ---------------------------------------------------------
+
+for (nm in setdiff(final_cols, names(RAS_out))) {
+  RAS_out[, (nm) := NA]
+}
+
+RAS_out <- RAS_out[, ..final_cols]
+
+# =========================================================
+# FINAL STACK
+# =========================================================
+
+UN_energy_stats <- rbindlist(
+  list(UN_energy_stats_intermediate, RAS_out),
+  use.names = TRUE,
+  fill = TRUE
+)
+
+# =========================================================
+# EXPORT
+# =========================================================
+
+fwrite(
+  UN_energy_stats,
+  file.path(path_out, "UN_energy_stats.csv")
+)

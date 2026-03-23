@@ -1,57 +1,106 @@
+# =========================================================
+# LIBRARIES
+# =========================================================
+
+# data.table: high-performance data manipulation (fast joins, grouping, memory-efficient operations)
 library(data.table)
+
+# openxlsx2: efficient reading of Excel named ranges and tables (faster than readxl for structured tables)
 library(openxlsx2)
+
+# readxl: used here specifically for simple sheet reads (UN_NCV)
 library(readxl)
 
+
 # =========================================================
-# HELPER
+# HELPER FUNCTIONS
 # =========================================================
 
+# ---------------------------------------------------------
+# read_excel_table
+# ---------------------------------------------------------
+#   Reads a named Excel table (named_region) and converts it into a data.table.
+# ---------------------------------------------------------
 read_excel_table <- function(path, table_name) {
-  wb <- wb_load(path)
-  as.data.table(wb_to_df(wb, named_region = table_name))
+  wb <- wb_load(path)                                  # Load entire workbook into memory
+  as.data.table(wb_to_df(wb, named_region = table_name)) # Extract named table and convert to data.table
 }
 
+
+# ---------------------------------------------------------
+# first_non_blank
+# ---------------------------------------------------------
+#   Returns the first non-empty, non-NA value in a vector.
+#   Used for deduplication logic where multiple mappings exist but we want:
+#     - no invented values
+#     - only the first valid mapping
+# ---------------------------------------------------------
 first_non_blank <- function(x) {
-  x <- as.character(x)
-  x <- trimws(x)
-  x[x == ""] <- NA_character_
-  y <- x[!is.na(x)]
-  if (length(y)) y[1] else NA_character_
+  x <- as.character(x)      # Force character to avoid type inconsistencies
+  x <- trimws(x)            # Remove leading/trailing whitespace
+  x[x == ""] <- NA_character_  # Convert empty strings to NA
+  y <- x[!is.na(x)]         # Keep only valid values
+  if (length(y)) y[1] else NA_character_  # Return first valid or NA
 }
 
+
+# Output path for all generated CSVs
+path_out <- "T:/Latest datasets/01.Raw data needing conversion/UN.Commodity balance/UN Commodity balance cleanup/"
+
+
 # =========================================================
-# LOAD
+# LOAD INPUT DATA
 # =========================================================
 
+# Transformation rules: defines how UN balance rows are expanded into additional flows
 rules           <- read_excel_table("T:/Indexes/UN.Energy data codes.xlsx", "Transformation")
+
+# Sign switch: Defines commodity-transaction combinations that need a sign switch from the commodity balance
+sign_switch     <- read_excel_table("T:/Indexes/UN.Energy data codes.xlsx", "Signswitch")
+
+# Product cleanup mapping: messy UN product names -> standardized ProdCode
 prod_cleanup    <- read_excel_table("T:/Indexes/IRENA.Codes.xlsx", "TechCleanup")
+
+# Product master table: contains metadata like NCV, source type, recoding rules
 products        <- read_excel_table("T:/Indexes/IRENA.Codes.xlsx", "Products")
+
+# Transaction metadata: defines categories, sign conventions, plant types, etc.
 transactions    <- read_excel_table("T:/Indexes/UN.Energy data codes.xlsx", "Transactions")
+
+# Country mapping: UN country names -> ISO3 codes
 country_cleanup <- read_excel_table("T:/Indexes/Countries.xlsx", "CountryCleanup")
 
+# Country-specific NCV factors (higher priority than generic NCV)
 UN_NCV  <- as.data.table(read_excel("T:/Latest datasets/UN.NCV.xlsx", sheet = "Long format"))
+
+# Main UN energy balance dataset (raw input)
 balance <- fread("T:/Latest datasets/UN.Commodity balance.csv", blank.lines.skip = TRUE)
+
 
 # =========================================================
 # TYPE STABILIZATION
 # =========================================================
+#   Force consistent types BEFORE any joins or logic.
+#   Prevents silent join failures and numeric coercion bugs.
 
 balance[, `:=`(
-  REF_AREA          = as.character(REF_AREA),
-  TRANSACTION       = as.character(TRANSACTION),
-  COMMODITY         = as.character(COMMODITY),
-  UNIT_MEASURE      = as.character(UNIT_MEASURE),
-  CONVERSION_FACTOR = as.numeric(CONVERSION_FACTOR),
-  OBS_VALUE         = as.numeric(OBS_VALUE),
-  TIME_PERIOD       = as.integer(TIME_PERIOD)
+  REF_AREA          = as.character(REF_AREA),      # Country name
+  TRANSACTION       = as.character(TRANSACTION),   # Transaction code
+  COMMODITY         = as.character(COMMODITY),     # Commodity code
+  UNIT_MEASURE      = as.character(UNIT_MEASURE),  # Unit (kt, m3, etc.)
+  CONVERSION_FACTOR = as.numeric(CONVERSION_FACTOR), # UN-provided NCV
+  OBS_VALUE         = as.numeric(OBS_VALUE),       # Observed value
+  TIME_PERIOD       = as.integer(TIME_PERIOD)      # Year
 )]
 
+# Clean product mapping table
 prod_cleanup[, `:=`(
   `Product Messy` = as.character(`Product Messy`),
-  ProdCode        = as.character(as.integer(ProdCode)),
+  ProdCode        = as.character(as.integer(ProdCode)), # Force numeric -> character consistency
   Product         = as.character(Product)
 )]
 
+# Clean product metadata table
 products[, `:=`(
   ProdCode                   = as.character(as.integer(ProdCode)),
   Product                    = as.character(Product),
@@ -62,20 +111,23 @@ products[, `:=`(
   `UNSD receipts recoding`   = as.character(`UNSD receipts recoding`)
 )]
 
+# Clean transaction metadata
 transactions[, `:=`(
   `Transaction code`  = as.character(`Transaction code`),
   `MERGE category`    = as.character(`MERGE category`),
   `Combustible plant` = as.character(`Combustible plant`),
   `NCV type`          = as.character(`NCV type`),
   Sign                = as.character(Sign),
-  DNI                 = as.character(DNI)
+  `DNI UN Transaction`= as.character(`DNI UN Transaction`)
 )]
 
+# Clean country mapping
 country_cleanup[, `:=`(
   Name = as.character(Name),
   ISO3 = as.character(ISO3)
 )]
 
+# Clean NCV table
 UN_NCV[, `:=`(
   `Country Name`   = as.character(`Country Name`),
   `Product Name`   = as.character(`Product Name`),
@@ -84,9 +136,14 @@ UN_NCV[, `:=`(
   `Factor to TJE`  = as.numeric(`Factor to TJE`)
 )]
 
+# Clean sign switch table
+sign_switch[, `Commodity-transaction` := as.character(`Commodity-transaction`)]
+sign_switch <- unique(sign_switch[, .(`Commodity-transaction`)])
+
 # =========================================================
-# DROP ONLY COMPLETELY EMPTY BALANCE ROWS
+# DROP COMPLETELY EMPTY ROWS
 # =========================================================
+# Removes rows that contain no meaningful information at all
 
 balance <- balance[
   !(is.na(REF_AREA) &
@@ -96,11 +153,16 @@ balance <- balance[
       is.na(OBS_VALUE))
 ]
 
-# =========================================================
-# DEDUP LOOKUPS
-# keep first non-empty mapping per join key, do not invent values
-# =========================================================
 
+# =========================================================
+# DEDUPLICATION OF LOOKUPS
+# =========================================================
+# Strategy:
+#   - Keep only one mapping per key
+#   - Do NOT fabricate values
+#   - Always pick first valid entry
+
+# Product cleanup deduplication
 prod_cleanup <- prod_cleanup[
   ,
   .(
@@ -110,6 +172,7 @@ prod_cleanup <- prod_cleanup[
   by = .(`Product Messy`)
 ]
 
+# Product metadata deduplication
 products <- products[
   ,
   .(
@@ -123,6 +186,7 @@ products <- products[
   by = .(ProdCode)
 ]
 
+# Country deduplication
 country_cleanup <- country_cleanup[
   !is.na(Name) & trimws(Name) != "",
   .(
@@ -131,6 +195,7 @@ country_cleanup <- country_cleanup[
   by = .(Name)
 ]
 
+# Ensure required columns exist in transactions
 if (!("Transaction description" %in% names(transactions))) {
   transactions[, `Transaction description` := Transaction]
 }
@@ -139,47 +204,52 @@ if (!("Balance type" %in% names(transactions))) {
   transactions[, `Balance type` := NA_character_]
 }
 
+# Deduplicate transactions
 transactions <- transactions[
   !is.na(`Transaction code`) & trimws(`Transaction code`) != "",
   .(
-    `Transaction name` = first_non_blank(
-      if ("Transaction name" %in% names(.SD)) `Transaction name` else Transaction
-    ),
+    `Transaction name`        = first_non_blank(if ("Transaction name" %in% names(.SD)) `Transaction name` else Transaction),
     `Transaction description` = first_non_blank(`Transaction description`),
+    `Parent code`             = first_non_blank(`Parent code`),
+    Parent                    = first_non_blank(Parent),
     `MERGE category`          = first_non_blank(`MERGE category`),
     `Combustible plant`       = first_non_blank(`Combustible plant`),
     `NCV type`                = first_non_blank(`NCV type`),
     `Balance type`            = first_non_blank(`Balance type`),
     Sign                      = first_non_blank(Sign),
-    DNI                       = first_non_blank(DNI)
+    `DNI UN Transaction`      = first_non_blank(`DNI UN Transaction`)
   ),
   by = .(`Transaction code`)
 ]
 
+# Deduplicate NCV
 UN_NCV <- UN_NCV[
   ,
-  .(
-    `Factor to TJE` = suppressWarnings(as.numeric(first_non_blank(`Factor to TJE`)))
-  ),
+  .(`Factor to TJE` = suppressWarnings(as.numeric(first_non_blank(`Factor to TJE`)))),
   by = .(`Country Name`, `Product Name`, Year, `Type Code`)
 ]
 
+
 # =========================================================
-# RULES
+# RULE PREPARATION
 # =========================================================
 
+# Create join key (From) and unique ID for deduplication
 rules[, `:=`(
   Multiplier = as.numeric(Multiplier),
   From       = paste0(`Commodity from`, `Transaction from`),
   ID         = paste0(`Commodity from`, `Transaction from`, `Commodity to`, `Transaction to`)
 )]
 
+# Remove duplicate rules
 rules <- unique(rules, by = "ID")
 
+
 # =========================================================
-# UN_NCV ENRICHMENT
+# NCV ENRICHMENT
 # =========================================================
 
+# Map products to ProdCode
 UN_NCV <- merge(
   UN_NCV,
   prod_cleanup[, .(`Product Messy`, ProdCode)],
@@ -189,6 +259,7 @@ UN_NCV <- merge(
   sort = FALSE
 )
 
+# Map countries to ISO3
 UN_NCV <- merge(
   UN_NCV,
   country_cleanup[, .(Name, ISO3)],
@@ -198,37 +269,44 @@ UN_NCV <- merge(
   sort = FALSE
 )
 
+# Create unique NCV identifier
 UN_NCV[, `NCV-ID` := paste(ISO3, Year, ProdCode, `Type Code`, sep = "-")]
 
+# Keep only required columns
 UN_NCV <- UN_NCV[, .(`NCV-ID`, `Factor to TJE`)]
 UN_NCV <- unique(UN_NCV, by = "NCV-ID")
 
+
 # =========================================================
-# BALANCE
+# BALANCE PREPROCESSING
 # =========================================================
 
+# Remove zero flows
 balance <- balance[OBS_VALUE != 0]
 
-# Unit normalization
+# Normalise units
 balance[UNIT_MEASURE == "TN", UNIT_MEASURE := "kt"]
 balance[UNIT_MEASURE == "M3", UNIT_MEASURE := "kM3"]
 
-# Commodity fixes
+# Preserve original commodity
 setnames(balance, "COMMODITY", "COMMODITY_ORIGINAL")
 
+# Fix specific commodity inconsistencies
 balance[, COMMODITY := fifelse(
   TRANSACTION %in% c("162", "1621", "1622"),
   "2000",
   COMMODITY_ORIGINAL
 )]
 
-balance[COMMODITY == "7000N", COMMODITY := "9101"]
-balance[TRANSACTION == "0889H", TRANSACTION := "015HP"]
-balance[TRANSACTION == "0889E", TRANSACTION := "015EB"]
 
 balance[, Year := TIME_PERIOD]
 
-# Product mapping
+
+# =========================================================
+# PRODUCT + TRANSACTION ENRICHMENT
+# =========================================================
+
+# Map product codes
 balance <- merge(
   balance,
   prod_cleanup[, .(`Product Messy`, ProdCode)],
@@ -238,17 +316,10 @@ balance <- merge(
   sort = FALSE
 )
 
+# Add product metadata
 balance <- merge(
   balance,
-  products[, .(
-    ProdCode,
-    Product,
-    `Source type`,
-    `UNSD NCV (TJ/kt)`,
-    `DNI UNSD Production`,
-    `UNSD production recoding`,
-    `UNSD receipts recoding`
-  )],
+  products,
   by = "ProdCode",
   all.x = TRUE,
   sort = FALSE
@@ -256,72 +327,79 @@ balance <- merge(
 
 balance[, ProdCode := as.character(ProdCode)]
 
-# Preserve original transaction before recode
+# Preserve original transaction
 balance[, TRANSACTION_ORIGINAL := TRANSACTION]
 
-balance[, TRANSACTION := fifelse(
-  TRANSACTION_ORIGINAL == "01" & !is.na(`UNSD production recoding`),
-  `UNSD production recoding`,
-  fifelse(
-    TRANSACTION_ORIGINAL == "022" & !is.na(`UNSD receipts recoding`),
-    `UNSD receipts recoding`,
-    TRANSACTION_ORIGINAL
-  )
-)]
+# # Apply recoding rules
+# balance[, TRANSACTION := fifelse(
+#   TRANSACTION_ORIGINAL == "01" & !is.na(`UNSD production recoding`),
+#   `UNSD production recoding`,
+#   fifelse(
+#     TRANSACTION_ORIGINAL == "022" & !is.na(`UNSD receipts recoding`),
+#     `UNSD receipts recoding`,
+#     TRANSACTION_ORIGINAL
+#   )
+# )]
 
-# Remove DNI production rows after recode rule
-balance <- balance[paste0(`DNI UNSD Production`, "-", TRANSACTION) != "DNI-01"]
+# Remove invalid production rows
+#balance <- balance[paste0(`DNI UNSD Production`, "-", TRANSACTION) != "DNI-01"]
 
-# Transaction metadata
+# Add transaction metadata
 balance <- merge(
   balance,
-  transactions[, .(
-    `Transaction code`,
-    `Transaction name`,
-    `Transaction description`,
-    `MERGE category`,
-    `Combustible plant`,
-    `NCV type`,
-    `Balance type`,
-    Sign,
-    DNI
-  )],
+  transactions,
   by.x = "TRANSACTION",
   by.y = "Transaction code",
   all.x = TRUE,
   sort = FALSE
 )
 
-# NCV type correction
+# Fix NCV type inconsistencies
 balance[, `NCV type` := fifelse(
   `Source type` == "Secondary" & `NCV type` == "D",
   "C",
   `NCV type`
 )]
 
-# Sign correction
+
+# =========================================================
+# SIGN + VALUE CORRECTIONS
+# =========================================================
+
 balance[, OBS_VALUE_PREV := OBS_VALUE]
 
+# Base UN sign logic
 balance[, OBS_VALUE := fifelse(
   TRANSACTION_ORIGINAL != TRANSACTION,
   OBS_VALUE_PREV,
   fifelse(Sign == "Negative", -OBS_VALUE_PREV, OBS_VALUE_PREV)
 )]
 
-# Country mapping
+# ---------------------------------------------------------
+# CUSTOM SIGN SWITCH (Commodity-Transaction level)
+# ---------------------------------------------------------
+
+balance[, OBS_VALUE := fifelse(
+  paste0(COMMODITY_ORIGINAL, TRANSACTION) %in% sign_switch$`Commodity-transaction`,
+  -OBS_VALUE,
+  OBS_VALUE
+)]
+
+# =========================================================
+# COUNTRY + NCV MERGE
+# =========================================================
+
 balance <- merge(
   balance,
-  country_cleanup[, .(Name, ISO3)],
+  country_cleanup,
   by.x = "REF_AREA",
   by.y = "Name",
   all.x = TRUE,
   sort = FALSE
 )
 
-# NCV id
 balance[, `NCV-ID` := paste(ISO3, Year, ProdCode, `NCV type`, sep = "-")]
 
-# Country NCV join
 balance <- merge(
   balance,
   UN_NCV,
@@ -330,28 +408,30 @@ balance <- merge(
   sort = FALSE
 )
 
-# NCV selection
+
+# =========================================================
+# NCV SELECTION LOGIC
+# =========================================================
+# Priority:
+#   1. Hardcoded fixes
+#   2. Conversion factor
+#   3. Country NCV
+#   4. Generic NCV
+
 balance[, `NCV (TJ/kt)` := fifelse(
-  TRANSACTION == "01" & COMMODITY == "9101" & UNIT_MEASURE == "GWHR", 10.8,
-  fifelse(
-    TRANSACTION %in% c("015EB", "015HP") & COMMODITY == "7000", -3.6,
+  ProdCode == "113220", 0.9,
     fifelse(
-      ProdCode == "113220", 0.9,
-      fifelse(
-        !is.na(CONVERSION_FACTOR), CONVERSION_FACTOR,
+      !is.na(CONVERSION_FACTOR), CONVERSION_FACTOR,
         fifelse(
           !is.na(`Factor to TJE`), `Factor to TJE`,
           `UNSD NCV (TJ/kt)`
         )
       )
-    )
-  )
-)]
+    )]
 
+# Track NCV source for debugging
 balance[, NCV_SOURCE := fifelse(
   ProdCode == "113220", "GENERIC_NCV",
-  fifelse(
-    TRANSACTION == "01" & COMMODITY == "9101" & UNIT_MEASURE == "GWHR", "GENERIC_NCV",
     fifelse(
       !is.na(CONVERSION_FACTOR), "UN_CONVERSION_FACTOR",
       fifelse(
@@ -359,109 +439,82 @@ balance[, NCV_SOURCE := fifelse(
         fifelse(!is.na(`UNSD NCV (TJ/kt)`), "GENERIC_NCV", "NONE")
       )
     )
-  )
-)]
+  )]
 
-# Energy
+
+# =========================================================
+# ENERGY CALCULATION
+# =========================================================
+
 balance[, TJ := fifelse(NCV_SOURCE != "NONE", `NCV (TJ/kt)` * OBS_VALUE, NA_real_)]
 balance[, `TJ UN` := CONVERSION_FACTOR * OBS_VALUE]
 balance[, `TJ diff` := TJ - `TJ UN`]
 balance[, PJ := TJ / 1000]
 balance[, `PJ UN` := `TJ UN` / 1000]
+
+# Flow direction
 balance[, io := fifelse(is.na(TJ), "NIGO", fifelse(TJ >= 0, "out", "in"))]
+
+# Rule join key
 balance[, From := paste0(COMMODITY_ORIGINAL, TRANSACTION)]
 
-# =========================================================
-# BALANCE FINAL SCHEMA BEFORE TRANSFORMATIONS
-# =========================================================
-
-base_cols <- c(
-  "NCV-ID",
-  "REF_AREA",
-  "TRANSACTION",
-  "Transaction name",
-  "Transaction description",
-  "ProdCode",
-  "COMMODITY",
-  "DATAFLOW",
-  "FREQ",
-  "COMMODITY_ORIGINAL",
-  "TIME_PERIOD",
-  "OBS_VALUE",
-  "UNIT_MULT",
-  "UNIT_MEASURE",
-  "OBS_STATUS",
-  "CONVERSION_FACTOR",
-  "Year",
-  "Product",
-  "Source type",
-  "UNSD NCV (TJ/kt)",
-  "DNI UNSD Production",
-  "UNSD production recoding",
-  "UNSD receipts recoding",
-  "TRANSACTION_ORIGINAL",
-  "MERGE category",
-  "Combustible plant",
-  "NCV type",
-  "Balance type",
-  "Sign",
-  "DNI",
-  "OBS_VALUE_PREV",
-  "ISO3",
-  "Factor to TJE",
-  "NCV (TJ/kt)",
-  "NCV_SOURCE",
-  "TJ",
-  "TJ UN",
-  "TJ diff",
-  "PJ",
-  "PJ UN",
-  "io",
-  "From",
-  "Commodity to",
-  "Transaction to",
-  "Multiplier",
-  "cto",
-  "tto"
-)
-
-for (nm in setdiff(base_cols, names(balance))) {
-  balance[, (nm) := NA]
-}
-
-balance <- balance[, ..base_cols]
 
 # =========================================================
-# TRANSFORMATIONS (PQ-equivalent, no persistent objects)
+# TRANSFORMATIONS
 # =========================================================
 
 commodity_transformations <- merge(
-  balance[, setdiff(names(balance), c("Multiplier", "cto", "tto", "Commodity to", "Transaction to")), with = FALSE],
+  balance,
   rules[, .(
     From,
     `Commodity to`,
     `Transaction to`,
     Multiplier,
     cto,
-    tto
+    tto,
+    Rule
   )],
   by = "From",
   allow.cartesian = TRUE,
   sort = FALSE
 )
-  
-# Scale energy (PQ behavior)
-commodity_transformations[, TJ := fifelse(is.na(TJ), NA_real_, TJ * Multiplier)]
-commodity_transformations[, PJ := fifelse(is.na(PJ), NA_real_, PJ * Multiplier)]
-commodity_transformations[, `TJ UN` := fifelse(is.na(`TJ UN`), NA_real_, `TJ UN` * Multiplier)]
-commodity_transformations[, `PJ UN` := fifelse(is.na(`PJ UN`), NA_real_, `PJ UN` * Multiplier)]
-commodity_transformations[, `TJ diff` := fifelse(is.na(`TJ diff`), NA_real_, `TJ diff` * Multiplier)]
 
-# Replace commodity + transaction
+# Scale flows
+commodity_transformations[, TJ := TJ * Multiplier]
+commodity_transformations[, PJ := PJ * Multiplier]
+commodity_transformations[, `TJ UN` := `TJ UN` * Multiplier]
+commodity_transformations[, `PJ UN` := `PJ UN` * Multiplier]
+commodity_transformations[, `TJ diff` := `TJ diff` * Multiplier]
+
+# Replace commodity/transaction
 commodity_transformations[, COMMODITY := `Commodity to`]
 commodity_transformations[, TRANSACTION := `Transaction to`]
 
-# Remap ProdCode
+# Remove outdated metadata
+commodity_transformations[, c(
+  "Transaction name","Transaction description","MERGE category",
+  "Combustible plant","NCV type","Balance type","Sign","DNI UN Transaction"
+) := NULL]
+
+# Reattach correct metadata
+commodity_transformations <- merge(
+  commodity_transformations,
+  transactions[, .(
+    `Transaction code`,
+    `MERGE category`,
+    `Combustible plant`,
+    `NCV type`,
+    `Balance type`,
+    Sign,
+    `DNI UN Transaction`
+  )],
+  by.x = "TRANSACTION",
+  by.y = "Transaction code",
+  all.x = TRUE,
+  sort = FALSE
+)
+
+# Remap products
 commodity_transformations[, ProdCode := NULL]
 
 commodity_transformations <- merge(
@@ -473,49 +526,67 @@ commodity_transformations <- merge(
   sort = FALSE
 )
 
-commodity_transformations[, ProdCode := as.character(ProdCode)]
+commodity_transformations[, `NCV-ID` := paste(ISO3, Year, ProdCode, `NCV type`, sep = "-")]
 
-# Use rule labels (PQ behavior)
-commodity_transformations[, Product := cto]
-commodity_transformations[, `Transaction description` := tto]
+# ---------------------------------------------------------
+# ENFORCE FINAL SCHEMA (BOTH TABLES)
+# ---------------------------------------------------------
 
-# Recompute io only
-commodity_transformations[, io := fifelse(
-  is.na(Multiplier),
-  "NIGO",
-  fifelse(Multiplier < 0, "in", "out")
-)]
+final_cols <- c(
+  # UN base
+  "DATAFLOW","FREQ","REF_AREA",
+  "COMMODITY","TRANSACTION","TIME_PERIOD",
+  "OBS_VALUE","UNIT_MULT","UNIT_MEASURE","OBS_STATUS","CONVERSION_FACTOR",
+  # Keys
+  "ISO3","Year","ProdCode","NCV type","NCV-ID",
+  # Energy
+  "TJ","PJ","io",
+  # NCV inputs
+  "Factor to TJE","UNSD NCV (TJ/kt)","NCV_SOURCE",
+  # Diagnostics
+  "TJ UN","TJ diff","PJ UN","OBS_VALUE_PREV",
+  # RAS logic
+  "MERGE category","Combustible plant","DNI UN Transaction",
+  # Traceability
+  "COMMODITY_ORIGINAL","TRANSACTION_ORIGINAL",
+  # Optional
+  "Data source","Rule"
+)
 
-# Align schema
-for (nm in setdiff(base_cols, names(commodity_transformations))) {
+# ---------------------------------------------------------
+# ADD DATA SOURCE FIRST
+# ---------------------------------------------------------
+
+balance[, `Data source` := "Original"]
+balance[, Rule := "Original"]
+
+commodity_transformations[, `Data source` := "Added"]
+
+# ---------------------------------------------------------
+# ENFORCE FINAL SCHEMA
+# ---------------------------------------------------------
+
+for (nm in setdiff(final_cols, names(balance))) {
+  balance[, (nm) := NA]
+}
+balance <- balance[, ..final_cols]
+
+for (nm in setdiff(final_cols, names(commodity_transformations))) {
   commodity_transformations[, (nm) := NA]
 }
-
-commodity_transformations <- commodity_transformations[, ..base_cols]
-
-
+commodity_transformations <- commodity_transformations[, ..final_cols]
 # =========================================================
-# STACK
+# STACK ORIGINAL + TRANSFORMED
 # =========================================================
 
 UN_energy_stats_intermediate <- rbindlist(
-  list(
-    copy(balance)[, `Data source` := "Original"],
-    copy(commodity_transformations)[, `Data source` := "Added"]
-  ),
+  list(balance, commodity_transformations),
   use.names = TRUE,
   fill = TRUE
 )
 
-UN_energy_stats_intermediate[
-  Product %in% c("Heat from combustible fuels", "Thermal electricity"),
-  Product := fifelse(Product == "Thermal electricity", "Electricity", "Heat")
-]
-
 # =========================================================
-# RAS
-# remove main activity / autoproducer only at aggregated output stage
-# keep detailed plant-fuel inputs
+# RAS INPUT PREPARATION
 # =========================================================
 
 ras_plant_inputs <- UN_energy_stats_intermediate[
@@ -527,27 +598,25 @@ ras_plant_inputs <- UN_energy_stats_intermediate[
 
 ras_plant_outputs <- UN_energy_stats_intermediate[
   io == "out" &
-    `MERGE category` %in% c("CHP plants", "Electricity plants", "Heat plants") &
-    `Combustible plant` == "Yes" &
-    is.na(DNI) &
+    TRANSACTION %in% c("015CC", "016CC", "015CE", "016CE", "015CH", "016CH") &
     TJ != 0
 ]
 
 ras_fuel_outputs <- UN_energy_stats_intermediate[
   io == "out" &
+    `MERGE category` %in% c("Electricity and heat") &
     `Combustible plant` == "Yes" &
-    DNI == "DNI" &
+    `DNI UN Transaction` == "DNI" &
+    TRANSACTION != "01SBF" &
     TJ > 0
 ]
+
 
 # =========================================================
 # EXPORT
 # =========================================================
 
-fwrite(ras_fuel_outputs, "T:/Latest datasets/01.Raw data needing conversion/UN.Commodity balance/ras_fuel_outputs.csv")
-
-fwrite(ras_plant_inputs, "T:/Latest datasets/01.Raw data needing conversion/UN.Commodity balance/ras_plant_inputs.csv")
-
-fwrite(ras_plant_outputs, "T:/Latest datasets/01.Raw data needing conversion/UN.Commodity balance/ras_plant_outputs.csv")
-
-fwrite(UN_energy_stats_intermediate, "T:/Latest datasets/01.Raw data needing conversion/UN.Commodity balance/UN_energy_stats_intermediate.csv")
+fwrite(ras_fuel_outputs, paste0(path_out,"ras_fuel_outputs.csv"))
+fwrite(ras_plant_inputs, paste0(path_out,"ras_plant_inputs.csv"))
+fwrite(ras_plant_outputs, paste0(path_out,"ras_plant_outputs.csv"))
+fwrite(UN_energy_stats_intermediate, paste0(path_out,"UN_energy_stats_intermediate.csv"))

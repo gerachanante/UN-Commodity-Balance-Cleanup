@@ -5,29 +5,8 @@
         {
             "codecMib": 106,
             "encoding": "UTF-8",
-            "file": "data_input.gdx",
-            "name": "data_input.gdx",
-            "type": "gdx"
-        },
-        {
-            "codecMib": 106,
-            "encoding": "UTF-8",
-            "file": "parameters.gdx",
-            "name": "parameters.gdx",
-            "type": "gdx"
-        },
-        {
-            "codecMib": 106,
-            "encoding": "UTF-8",
             "file": "ras-results.gdx",
             "name": "ras-results.gdx",
-            "type": "gdx"
-        },
-        {
-            "codecMib": 106,
-            "encoding": "UTF-8",
-            "file": "sets.gdx",
-            "name": "sets.gdx",
             "type": "gdx"
         },
         {

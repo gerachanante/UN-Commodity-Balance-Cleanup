@@ -1,127 +1,588 @@
-The script processes UN energy statistics data, specifically the commodity balance, and transforms it into a cleaned, enriched, energy-converted intermediate dataset ready for further analysis
+The script processes **UN energy statistics commodity balance data** and converts it into a **cleaned, standardized, energy-valued intermediate dataset**, plus three **RAS input tables** used later to reconcile plant fuel inputs and plant energy outputs.
 
-## 1. Helper Functions
+It combines raw UN commodity balance data with several Excel lookup tables to:
 
-Two small utilities are defined upfront:
-
-- **`read_excel_table`** reads a named Excel table (a defined region, not just a sheet) into a `data.table`.
-- **`first_non_blank`** takes a vector and returns the first non-empty, non-NA string value. This is used later to safely collapse duplicate lookup rows without inventing data.
-
----
-
-## 2. Loading Data
-
-Six source files are loaded:
-
-| Object            | File                      | Content                                               |
-| ----------------- | ------------------------- | ----------------------------------------------------- |
-| `rules`           | UN.Energy data codes.xlsx | Transformation rules (commodity/transaction recoding) |
-| `prod_cleanup`    | IRENA.Codes.xlsx          | Messy-to-clean product name mapping                   |
-| `products`        | IRENA.Codes.xlsx          | Product metadata and NCV defaults                     |
-| `transactions`    | UN.Energy data codes.xlsx | Transaction metadata (sign, DNI flags, categories)    |
-| `country_cleanup` | Countries.xlsx            | Country name to ISO3 mapping                          |
-| `UN_NCV`          | UN.NCV.xlsx               | Country-year-product Net Calorific Values             |
-| `balance`         | UN.Commodity balance.csv  | The main raw energy statistics dataset                |
-
-## 3. Type Stabilization
-
-All columns across all tables are explicitly cast to the correct types (character, numeric, integer). This prevents silent type mismatches during joins and computations, a common source of bugs with mixed-source data.
+- standardize products, transactions, units, and country codes,
+    
+- apply sign logic consistently,
+    
+- attach metadata and calorific values,
+    
+- convert physical quantities into energy terms,
+    
+- generate additional transformed rows from rule-based commodity/transaction mappings,
+    
+- and export both the full intermediate dataset and the RAS subsets.
+    
 
 ---
 
-## 4. Deduplication of Lookups
+## 1. Libraries
 
-Each lookup table is collapsed so there is exactly one row per key, using `first_non_blank` to pick the first valid value. This ensures joins are clean 1-to-many (not many-to-many), avoiding row explosion and ensuring no fabricated values sneak in.
+Three packages are used:
 
-## 5. Cleaning the Balance Table
+- **`data.table`** for fast joins, grouping, mutation, and export
+    
+- **`openxlsx2`** to read named Excel tables efficiently
+    
+- **`readxl`** for reading the UN NCV sheet
+    
 
-Several fixes are applied to the raw commodity balance:
+---
 
-- **Zero rows dropped** — observations with `OBS_VALUE == 0` are removed since they carry no information.
-- **Unit normalization** — `TN` → `kt`, `M3` → `kM3` for consistency.
-- **Commodity fixes** — three specific overrides:
-    - Transactions 162/1621/1622 get commodity `2000` 
-    - Commodity `7000N` → `9101` to move electricity from nuclear to the nuclear column
-    - Two transaction codes are rewritten (`0889H` → `015HP`, `0889E` → `015EB`), allocating electric boilers and heat pumps
-- **Production recoding** — if a product has a specific `UNSD production recoding` or `UNSD receipts recoding`, those override the raw transaction code. This handles cases where UN classifies something as production (`01`) or receipts (`022`) but it should be mapped to a more specific transaction.
-- **DNI filtering** — rows marked "Do Not Include" for production are dropped after recoding.
+## 2. Helper Functions
 
-## 6. Enriching with Metadata
+Two helper functions are defined.
 
-A series of left joins attach metadata to each balance row:
+### `read_excel_table(path, table_name)`
 
-- **Product info** — product name, source type (primary/secondary), default NCV, production/receipts recoding rules
-- **Transaction info** — transaction name and description, merge category, whether it's a combustible plant flow, NCV type, sign (positive/negative), DNI flag
-- **Country ISO3** — standardises country identifiers
-- **Country-specific NCVs** — from `UN_NCV`, matched by a composite key of `ISO3 + Year + ProdCode + NCV type`
+Reads a named Excel region/table and converts it into a `data.table`.
 
-## 7. NCV Selection and Energy Calculation
+### `first_non_blank(x)`
 
-The script builds a priority hierarchy for selecting the Net Calorific Value to use:
+Returns the first non-empty, non-`NA` value in a vector after trimming whitespace.
 
-1. **Hardcoded overrides** for specific edge cases (electricity in GWh, heat pumps/electric boilers, a specific biofuel product code)
-2. **UN-provided conversion factor** from the balance itself
-3. **Country-specific NCV** from the UN_NCV table
-4. **Generic/default NCV** from the products table
-5. **NONE** — no NCV available
+This is used in lookup-table deduplication so that:
 
-Energy is then computed as `TJ = NCV × OBS_VALUE`, and `NCV_SOURCE` records which source was used for auditability. PJ variants and a comparison column `TJ diff` (vs. UN's own conversion) are also calculated.
+- joins remain one-to-many or one-to-one,
+    
+- row explosion is avoided,
+    
+- and no fabricated values are introduced.
+    
 
-## 8. Transformation Rules
+---
 
-This is the most complex step. A set of rules defines how certain commodity+transaction combinations should be **converted into a different commodity+transaction**, with a multiplier applied to the energy values. This replicates a Power Query-style transformation logic.
+## 3. Input Data Loaded
 
-For each matching row in the balance, a new row is generated representing the transformed commodity (e.g., converting fuel inputs to electricity outputs). The new rows get:
+The script loads **eight** source objects, not six:
 
-- Updated `COMMODITY` and `TRANSACTION` codes
-- Re-joined transaction metadata
-- Re-mapped `ProdCode` via `prod_cleanup`
-- Product label set from the rule's `cto` column (the target label)
-- Energy values scaled by the rule `Multiplier`
+|Object|File|Purpose|
+|---|---|---|
+|`rules`|`UN.Energy data codes.xlsx`|Commodity/transaction transformation rules|
+|`sign_switch`|`UN.Energy data codes.xlsx`|Commodity-transaction pairs requiring sign reversal|
+|`prod_cleanup`|`IRENA.Codes.xlsx`|Product name cleanup / mapping to standardized `ProdCode`|
+|`products`|`IRENA.Codes.xlsx`|Product metadata, default NCVs, source type, recoding info|
+|`transactions`|`UN.Energy data codes.xlsx`|Transaction metadata, categories, signs, plant logic, DNI flags|
+|`country_cleanup`|`Countries.xlsx`|Country name to ISO3 mapping|
+|`UN_NCV`|`UN.NCV.xlsx`|Country-year-product NCV factors|
+|`balance`|`UN.Commodity balance.csv`|Raw UN commodity balance data|
 
-## 9. Stacking and Final Cleanup
+---
 
-The original balance rows (labeled `"Original"`) and the transformation-derived rows (labeled `"Added"`) are stacked into a single table called `UN_energy_stats_intermediate`.
+## 4. Type Stabilization
 
-One final label fix is applied: rows for "Heat from combustible fuels" and "Thermal electricity" are relabeled to simply "Heat" and "Electricity" for consistency.
+All major tables are explicitly cast to stable types before any joins or calculations.
 
-## 10. RAS Splits
+This includes:
 
-Three analytical subsets are carved out for a **RAS (Residual Allocation/Scaling) procedure**, to reconcile plant-level fuel inputs with electricity/heat outputs:
+- character coercion for keys and labels,
+    
+- numeric coercion for values and NCVs,
+    
+- integer coercion for years.
+    
 
-|Object|What it contains|
-|---|---|
-|`ras_plant_inputs`|Fuel inputs going _into_ combustible electricity/heat/CHP plants|
-|`ras_plant_outputs`|Energy outputs _from_ those same plants (non-DNI rows)|
-|`ras_fuel_outputs`|Electricity/heat outputs that _are_ DNI-flagged and positive — these are the "fuel-derived" output flows needing conversion|
+This step is critical because the pipeline merges data from CSV and multiple Excel sources, where silent type mismatches are otherwise common.
 
-## 11. Export
+---
 
-All four tables are written to CSV in a staging folder:
+## 5. Removal of Empty Rows
+
+Before deeper processing, the script removes rows from `balance` that are completely empty across the key identifying/value columns.
+
+This is different from dropping zero-value rows:
+
+- **empty rows** are removed first,
+    
+- **zero-value rows** are removed later in the balance preprocessing step.
+    
+
+---
+
+## 6. Lookup Deduplication
+
+Several lookup tables are collapsed so each key appears only once.
+
+### `prod_cleanup`
+
+Deduplicated by `Product Messy`, keeping the first valid:
+
+- `ProdCode`
+    
+- `Product`
+    
+
+### `products`
+
+Deduplicated by `ProdCode`, keeping the first valid:
+
+- product label,
+    
+- source type,
+    
+- generic NCV,
+    
+- production DNI flag,
+    
+- production/receipts recoding fields
+    
+
+### `country_cleanup`
+
+Deduplicated by country name.
+
+### `transactions`
+
+Deduplicated by transaction code after ensuring required columns exist:
+
+- if `Transaction description` is missing, it is created
+    
+- if `Balance type` is missing, it is created as `NA`
+    
+
+Then the first valid metadata entry is kept for each transaction code.
+
+### `UN_NCV`
+
+Deduplicated by:
+
+- country name,
+    
+- product name,
+    
+- year,
+    
+- type code
+    
+
+keeping the first valid NCV factor.
+
+This keeps joins controlled and prevents accidental many-to-many merges.
+
+---
+
+## 7. Rule Preparation
+
+The transformation rules table is prepared by creating:
+
+- **`From`** = concatenation of `Commodity from` + `Transaction from`
+    
+- **`ID`** = unique rule identifier based on source and target commodity/transaction
+    
+
+`Multiplier` is converted to numeric, and duplicate rules are removed by `ID`.
+
+This ensures that transformation expansion later is deterministic.
+
+---
+
+## 8. NCV Table Enrichment
+
+The `UN_NCV` table is enriched in two steps:
+
+1. Product names are mapped to `ProdCode` using `prod_cleanup`
+    
+2. Country names are mapped to `ISO3` using `country_cleanup`
+    
+
+Then a composite key is created:
+
+- **`NCV-ID` = ISO3-Year-ProdCode-TypeCode**
+    
+
+Only `NCV-ID` and `Factor to TJE` are retained afterward.
+
+This produces a clean keyed NCV table for later joining into the balance.
+
+---
+
+## 9. Balance Preprocessing
+
+The raw balance undergoes several core cleaning steps.
+
+### Zero rows are removed
+
+Rows with `OBS_VALUE == 0` are dropped.
+
+### Units are normalized
+
+- `TN` → `kt`
+    
+- `M3` → `kM3`
+    
+
+### Original commodity is preserved
+
+The original `COMMODITY` column is renamed to `COMMODITY_ORIGINAL`, and a new working `COMMODITY` column is created.
+
+### Commodity override for transactions 162/1621/1622
+
+For these transactions, commodity is forced to `2000`; otherwise it remains `COMMODITY_ORIGINAL`.
+
+### Year field is created
+
+`Year := TIME_PERIOD`
+
+---
+
+## 10. Product and Transaction Enrichment
+
+### Product mapping
+
+The current working `COMMODITY` is mapped to `ProdCode` through `prod_cleanup`.
+
+### Product metadata
+
+The balance is merged with `products`, adding:
+
+- product label,
+    
+- source type,
+    
+- generic NCV,
+    
+- recoding fields,
+    
+- production DNI flags
+    
+
+### Original transaction is preserved
+
+`TRANSACTION_ORIGINAL := TRANSACTION`
+
+
+### Transaction metadata
+
+The balance is then merged with `transactions`, adding fields such as:
+
+- `MERGE category`
+    
+- `Combustible plant`
+    
+- `NCV type`
+    
+- `Balance type`
+    
+- `Sign`
+    
+- `DNI UN Transaction`
+    
+
+### NCV type correction
+
+If:
+
+- `Source type == "Secondary"`
+    
+- and `NCV type == "D"`
+    
+
+then `NCV type` is changed to `"C"`.
+
+This fixes an inconsistency for secondary products.
+
+---
+
+## 11. Sign and Value Corrections
+
+This is now a two-layer sign treatment.
+
+### Step 1: preserve original observed value
+
+`OBS_VALUE_PREV := OBS_VALUE`
+
+### Step 2: apply base transaction sign logic
+
+If the transaction has been recoded, keep the original sign.  
+Otherwise:
+
+- if `Sign == "Negative"`, multiply by `-1`
+    
+- else keep as-is
+    
+
+Since transaction recoding is currently disabled, this effectively means the sign is driven by transaction metadata.
+
+### Step 3: apply custom sign-switch overrides
+
+A second sign correction is applied for specific `COMMODITY_ORIGINAL + TRANSACTION` combinations listed in `sign_switch`.
+
+If the pair appears in `sign_switch`, the sign is flipped again.
+
+This is a new explicit layer in the latest code and should be treated as part of the core logic.
+
+---
+
+## 12. Country and NCV Merge
+
+Country names are mapped to `ISO3` using `country_cleanup`.
+
+Then the script creates:
+
+- **`NCV-ID = ISO3-Year-ProdCode-NCV type`**
+    
+
+and joins the cleaned `UN_NCV` table back into the balance.
+
+This attaches the country-specific NCV factor where available.
+
+---
+
+## 13. NCV Selection Logic
+
+The script builds a priority order for choosing the NCV used for energy conversion.
+
+### Priority order actually implemented now
+
+1. **Hardcoded override** for `ProdCode == "113220"` → `0.9`
+    
+2. **UN `CONVERSION_FACTOR`** from the raw balance
+    
+3. **Country-specific NCV** from `UN_NCV`
+    
+4. **Generic product NCV** from `products`
+    
+
+If none are available, the NCV is effectively missing.
+
+### `NCV_SOURCE`
+
+A source label is recorded for traceability:
+
+- `GENERIC_NCV`
+    
+- `UN_CONVERSION_FACTOR`
+    
+- `COUNTRY_NCV`
+    
+- `NONE`
+    
+
+Note that the hardcoded `113220` override is labeled as `GENERIC_NCV` in the current implementation.
+
+---
+
+## 14. Energy Calculation
+
+Using the selected NCV, the script computes:
+
+- **`TJ`** = selected NCV × `OBS_VALUE`
+    
+- **`TJ UN`** = `CONVERSION_FACTOR × OBS_VALUE`
+    
+- **`TJ diff`** = `TJ - TJ UN`
+    
+- **`PJ`** = `TJ / 1000`
+    
+- **`PJ UN`** = `TJ UN / 1000`
+    
+
+### Flow direction
+
+The script derives an `io` direction:
+
+- `out` if `TJ >= 0`
+    
+- `in` if `TJ < 0`
+    
+- `NIGO` if `TJ` is missing
+    
+
+### Rule join key
+
+- **`From = COMMODITY_ORIGINAL + TRANSACTION`**
+    
+
+This is the key used to match balance rows to transformation rules.
+
+---
+
+## 15. Rule-Based Transformations
+
+This is the row-expansion step where new flows are created.
+
+The script merges the enriched balance with `rules` using `From`, allowing cartesian expansion where one source row matches multiple rules.
+
+For each matched rule, a new row is generated.
+
+### What is changed in transformed rows
+
+- `COMMODITY` is replaced with `Commodity to`
+    
+- `TRANSACTION` is replaced with `Transaction to`
+    
+- energy values are scaled by `Multiplier`:
+    
+    - `TJ`
+        
+    - `PJ`
+        
+    - `TJ UN`
+        
+    - `PJ UN`
+        
+    - `TJ diff`
+        
+
+### Metadata refresh
+
+Because the transaction changed, old transaction metadata is removed and rejoined from `transactions`.
+
+### Product remapping
+
+Since the commodity changed, `ProdCode` is dropped and rebuilt by remapping the new `COMMODITY` through `prod_cleanup`.
+
+Then a new `NCV-ID` is created.
+
+This step creates the synthetic rows that represent transformed energy flows, analogous to the earlier Power Query transformation logic.
+
+---
+
+## 16. Final Schema Enforcement
+
+Before stacking the original and transformed data, both tables are forced into the same schema.
+
+A fixed vector `final_cols` defines the final output structure, including:
+
+- raw UN identifiers,
+    
+- keys,
+    
+- energy values,
+    
+- NCV information,
+    
+- diagnostics,
+    
+- RAS metadata,
+    
+- traceability fields,
+    
+- source labels
+    
+
+Missing columns are added as `NA` so that both tables can be row-bound cleanly.
+
+### Source labeling
+
+- original balance rows get `Data source = "Original"` and `Rule = "Original"`
+    
+- transformed rows get `Data source = "Added"`
+    
+
+---
+
+## 17. Final Intermediate Table
+
+The final main output is:
+
+- **`UN_energy_stats_intermediate`**
+    
+
+This is built by stacking:
+
+- the cleaned/enriched original balance rows
+    
+- the rule-generated transformed rows
+    
+
+using `rbindlist(..., use.names = TRUE, fill = TRUE)`.
+
+---
+
+## 18. RAS Subset Preparation
+
+Three subsets are extracted from `UN_energy_stats_intermediate` for later RAS allocation logic.
+
+### `ras_plant_inputs`
+
+Fuel inputs going into combustible plants:
+
+- `io == "in"`
+    
+- `MERGE category` in `CHP plants`, `Electricity plants`, `Heat plants`
+    
+- `Combustible plant == "Yes"`
+    
+- `TJ != 0`
+    
+
+### `ras_plant_outputs`
+
+Explicit electricity/heat outputs from plant transactions:
+
+- `io == "out"`
+    
+- `TRANSACTION` in `015CC`, `016CC`, `015CE`, `016CE`, `015CH`, `016CH`
+    
+- `TJ != 0`
+    
+
+### `ras_fuel_outputs`
+
+Fuel-derived output rows that are positive, DNI-flagged, and need reconciliation:
+
+- `io == "out"`
+    
+- `MERGE category == "Electricity and heat"`
+    
+- `Combustible plant == "Yes"`
+    
+- `DNI UN Transaction == "DNI"`
+    
+- `TRANSACTION != "01SBF"`
+    
+- `TJ > 0`
+    
+
+These are the three core inputs to the downstream plant-fuel allocation procedure.
+
+---
+
+## 19. Export
+
+The script exports four CSV files to the staging folder:
 
 - `ras_fuel_outputs.csv`
+    
 - `ras_plant_inputs.csv`
+    
 - `ras_plant_outputs.csv`
-- `UN_energy_stats_intermediate.csv` — the main output, used downstream
+    
+- `UN_energy_stats_intermediate.csv`
+    
 
-## Summary Flow
+---
 
-```
-Raw CSV + Excel lookups
-        ↓
-Type fixing + deduplication
-        ↓
-Balance cleaning (units, commodity/transaction fixes, DNI drops)
-        ↓
-Metadata joins (products, transactions, countries, NCVs)
-        ↓
-NCV prioritization → TJ/PJ energy calculation
-        ↓
-Transformation rules → new commodity rows added
-        ↓
-Stack original + added rows
-        ↓
-RAS subset extraction
-        ↓
-CSV exports
-```
+# Updated Flow Summary
+
+Raw CSV + Excel lookups  
+        ↓  
+Type stabilization  
+        ↓  
+Drop empty rows  
+        ↓  
+Deduplicate lookup tables  
+        ↓  
+Prepare rules and NCV keys  
+        ↓  
+Clean balance (drop zeros, normalize units, commodity fixes)  
+        ↓  
+Map products and transactions  
+        ↓  
+Apply sign logic  
+   - transaction sign metadata  
+   - commodity-transaction sign_switch overrides  
+        ↓  
+Map ISO3 and NCVs  
+        ↓  
+Select NCV and compute TJ/PJ  
+        ↓  
+Apply transformation rules to generate added rows  
+        ↓  
+Standardize schema and stack original + added rows  
+        ↓  
+Extract RAS subsets  
+        ↓  
+Export CSVs

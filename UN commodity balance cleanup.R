@@ -66,6 +66,9 @@ products        <- read_excel_table("T:/Indexes/IRENA.Codes.xlsx", "Products")
 # Transaction metadata: defines categories, sign conventions, plant types, etc.
 transactions    <- read_excel_table("T:/Indexes/UN.Energy data codes.xlsx", "Transactions")
 
+# MERGE process allocation table
+MERGE_processes <- read_excel_table("T:/Indexes/UN.Energy data codes.xlsx", "MERGE_processes")
+
 # Country mapping: UN country names -> ISO3 codes
 country_cleanup <- read_excel_table("T:/Indexes/Countries.xlsx", "CountryCleanup")
 
@@ -147,6 +150,16 @@ UN_NCV[, `:=`(
 
 # Clean sign switch table
 sign_switch[, `Commodity-transaction` := as.character(`Commodity-transaction`)]
+
+# Clean MERGE process table
+MERGE_processes[, `:=`(
+  `Transaction code`        = as.character(`Transaction code`),
+  `Commodity code`          = as.character(`Commodity code`),
+  `Commodity-transaction`   = as.character(`Commodity-transaction`),
+  Commodity                 = as.character(Commodity),
+  `Transaction description` = as.character(`Transaction description`),
+  `MERGE process`           = as.character(`MERGE process`)
+)]
 
 # =========================================================
 # DROP COMPLETELY EMPTY ROWS
@@ -237,6 +250,18 @@ UN_NCV <- UN_NCV[
   by = .(`Country Name`, `Product Name`, Year, `Type Code`)
 ]
 
+# Deduplicate MERGE process mapping
+MERGE_processes <- MERGE_processes[
+  !is.na(`Commodity-transaction`) & trimws(`Commodity-transaction`) != "",
+  .(
+    `Transaction code`        = first_non_blank(`Transaction code`),
+    `Commodity code`          = first_non_blank(`Commodity code`),
+    Commodity                 = first_non_blank(Commodity),
+    `Transaction description` = first_non_blank(`Transaction description`),
+    `MERGE process`           = first_non_blank(`MERGE process`)
+  ),
+  by = .(`Commodity-transaction`)
+]
 
 # =========================================================
 # RULE PREPARATION
@@ -637,6 +662,7 @@ UN_energy_stats_intermediate <- rbindlist(
   fill = TRUE
 )
 
+
 # =========================================================
 # RAS INPUT PREPARATION
 # =========================================================
@@ -662,6 +688,7 @@ RAS_fuel_outputs <- UN_energy_stats_intermediate[
     TRANSACTION != "01SBF" &
     TJ > 0
 ]
+
 
 
 # =========================================================

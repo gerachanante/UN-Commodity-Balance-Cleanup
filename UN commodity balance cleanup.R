@@ -147,7 +147,6 @@ UN_NCV[, `:=`(
 
 # Clean sign switch table
 sign_switch[, `Commodity-transaction` := as.character(`Commodity-transaction`)]
-sign_switch <- unique(sign_switch[, .(`Commodity-transaction`)])
 
 # =========================================================
 # DROP COMPLETELY EMPTY ROWS
@@ -388,11 +387,51 @@ balance[, OBS_VALUE := fifelse(
 # CUSTOM SIGN SWITCH (Commodity-Transaction level)
 # ---------------------------------------------------------
 
-balance[, OBS_VALUE := fifelse(
-  paste0(COMMODITY_ORIGINAL, TRANSACTION) %in% sign_switch$`Commodity-transaction`,
-  -OBS_VALUE,
-  OBS_VALUE
-)]
+balance[, COMMODITY_ORIGINAL := as.character(COMMODITY_ORIGINAL)]
+balance[, TRANSACTION := as.character(TRANSACTION)]
+
+# Default
+balance[, Rule := "Original"]
+
+if ("Commodity from" %in% names(sign_switch) && "Transaction from" %in% names(sign_switch)) {
+  
+  sign_switch[, `:=`(
+    `Commodity from`   = as.character(`Commodity from`),
+    `Transaction from` = as.character(`Transaction from`)
+  )]
+  
+  # Keys
+  balance[, key := paste0(COMMODITY_ORIGINAL, TRANSACTION)]
+  sign_switch[, key := paste0(`Commodity from`, `Transaction from`)]
+  
+  # Lookup = use the existing column (no reinvention)
+  sign_switch_lookup <- unique(
+    sign_switch[, .(key, Rule)],
+    by = "key"
+  )
+  
+  # Join
+  balance <- merge(
+    balance,
+    sign_switch_lookup,
+    by = "key",
+    all.x = TRUE,
+    suffixes = c("", "_ss"),
+    sort = FALSE
+  )
+  
+  # Apply sign switch ONLY where rule exists
+  balance[!is.na(Rule_ss), `:=`(
+    OBS_VALUE = -OBS_VALUE,
+    Rule      = Rule_ss,
+    `Data source` = "Sign switch"
+  )]
+  
+  balance[, c("key","Rule_ss") := NULL]
+}
+
+balance[is.na(`Data source`), `Data source` := "Original"]
+
 
 # =========================================================
 # COUNTRY + NCV MERGE
@@ -481,12 +520,16 @@ commodity_transformations <- merge(
     Multiplier,
     cto,
     tto,
-    Rule
+    Rule_transform = Rule
   )],
   by = "From",
   allow.cartesian = TRUE,
   sort = FALSE
 )
+
+# Rule assignment
+commodity_transformations[, Rule := Rule_transform]
+commodity_transformations[, Rule_transform := NULL]
 
 # Scale flows
 commodity_transformations[, TJ := TJ * Multiplier]
@@ -494,6 +537,7 @@ commodity_transformations[, PJ := PJ * Multiplier]
 commodity_transformations[, `TJ UN` := `TJ UN` * Multiplier]
 commodity_transformations[, `PJ UN` := `PJ UN` * Multiplier]
 commodity_transformations[, `TJ diff` := `TJ diff` * Multiplier]
+
 
 # Replace commodity/transaction
 commodity_transformations[, COMMODITY := `Commodity to`]
@@ -566,9 +610,7 @@ final_cols <- c(
 # ADD DATA SOURCE FIRST
 # ---------------------------------------------------------
 
-balance[, `Data source` := "Original"]
-balance[, Rule := "Original"]
-
+balance[is.na(`Data source`), `Data source` := "Original"]
 commodity_transformations[, `Data source` := "Added"]
 
 # ---------------------------------------------------------

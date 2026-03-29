@@ -1,7 +1,16 @@
 {
+    "dynamicMainFile": false,
+    "expand": "1",
     "file": "UN Plants RAS.gms",
     "name": "UN Plants RAS",
     "nodes": [
+        {
+            "codecMib": 106,
+            "encoding": "UTF-8",
+            "file": "data_input.gdx",
+            "name": "data_input.gdx",
+            "type": "gdx"
+        },
         {
             "codecMib": 106,
             "encoding": "UTF-8",
@@ -27,8 +36,10 @@
     "options": [
         ""
     ],
+    "ownBaseDir": false,
     "path": ".",
     "pf": "",
     "projectType": 1,
+    "timestamp": "2026-03-29T00:58:54.670",
     "workDir": "."
 }

@@ -373,16 +373,20 @@ The domain is the feasible set for v_allocated_output. A cell is admitted when A
 $offText
 
 allocation_domain(iso,t,p1,f1,p2,p3,f2)$[
-       iso_t_active(iso,t)
-   and plant_output(iso,t,p2,f2)
-   and (abs(fuel_output_balanced(iso,t,p3,f2)) gt 0)
-   and fuel_map(f1,p3)
-   and ((pe(p1) and pe(p2)) or (pc(p1) and pc(p2)) or (ph(p1) and ph(p2)))
-   and ((fe(f2) and (pe(p1) or pc(p1))) or (fh(f2) and (ph(p1) or pc(p1))))
-   and (
-          plant_map(p1,p2,p3)
-       or (pre_structural_infeasibility(iso,t,p2,p3,f2) and plant_input(iso,t,p1,f1))
-   )
+    iso_t_active(iso,t)
+    and plant_output(iso,t,p2,f2)
+    and (abs(fuel_output_balanced(iso,t,p3,f2)) gt 0)
+    and fuel_map(f1,p3)
+    and ((pe(p1) and pe(p2)) or (pc(p1) and pc(p2)) or (ph(p1) and ph(p2)))
+    and ((fe(f2) and (pe(p1) or pc(p1))) or (fh(f2) and (ph(p1) or pc(p1))))
+    and (
+        plant_map(p1,p2,p3)
+        or (
+            pre_structural_infeasibility(iso,t,p2,p3,f2)
+            and plant_input(iso,t,p1,f1)
+            and sum(f1a$plant_input(iso,t,p1,f1a),1) gt 0
+        )
+    )
 ] = yes;
 
 * --- Domain support counts and unsupported-row flags -----------------------
@@ -482,8 +486,10 @@ seed_deviation_weight(iso,t,p1,f1,p2,p3,f2) = 0;
 seed_deviation_weight(iso,t,p1,f1,p2,p3,f2)$allocation_domain(iso,t,p1,f1,p2,p3,f2) =
     (1/max(10, abs(seed_allocated_output(iso,t,p1,f1,p2,p3,f2))))
  *(1
-      + 100$[not plant_map(p1,p2,p3)]
       + 50$[not fuel_map(f1,p3)]
+      + 100$[not plant_map(p1,p2,p3)]
+      + 500$[total_input(iso,t,p1) eq 0]
+      + 1000*(1/(1 + abs(plant_input(iso,t,p1,f1))))
       + 5000$[pre_structural_infeasibility(iso,t,p2,p3,f2)]
     );
 

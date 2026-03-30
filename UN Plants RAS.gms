@@ -25,7 +25,7 @@
 *   Uses CPLEX with IIS generation enabled for infeasibility diagnosis.
 *   preind=0 disables pre-solving so that the IIS reflects the original model.
 * =============================================================================
-
+$eolCom #
 $onecho > cplex.opt
 iis 1
 preind 0
@@ -361,51 +361,68 @@ pre_structural_infeasibility(iso,t,p2,p3,f2)$[
 
 *------------------------------- ALLOCATION DOMAIN -------------------------------*
 $onText
-The domain is the feasible set for v_allocated_output. A cell is admitted when ALL of the following hold simultaneously:
-    1. Country-year is active.
-    2. The target plant-output row is non-zero (something to explain).
-    3. The target fuel-output row is non-zero after scaling.
-    4. The input fuel f1 is linked to bucket p3 via fuel_map.
-    5. Plant p1 and plant p2 belong to the same family (no cross-family flows).
-    6. The output commodity f2 is compatible with the plant family (e.g. only electricity plants produce electricity).
-    7. Either a manual plant_map supports the (p1,p2,p3) triple, OR the triple belongs to a structurally infeasible (p2,p3,f2) pair and p1 has input
-    data (local structural-infeasibility repair).
+allocation_domain defines which detailed input cells are even allowed to send
+output to a given aggregate plant-output row p2 and fuel-output bucket p3.
+
+Interpretation:
+  (iso,t,p1,f1,p2,p3,f2) is feasible if:
+  1) this country-year has any data,
+  2) the target plant-output row exists,
+  3) the target fuel-output bucket exists after scaling,
+  4) the fuel f1 is compatible with the output bucket p3 through fuel_map,
+  5) the detailed plant p1 and aggregate plant p2 belong to the same family,
+  6) the output commodity f2 is compatible with that plant family,
+  7) either:
+       - the manual plant_map explicitly supports (p1,p2,p3), or
+       - this is a structurally infeasible case and we allow a controlled fallback,
+         but only for plants that actually have input data for this fuel.
+
+Important modeling choice:
+  The domain is now kept physically meaningful:
+  fuel_map(f1,p3) is mandatory.
+  We no longer open the domain with ad hoc fuel fallback logic.
+  Instead, data inconsistencies are handled in the objective via penalties.
 $offText
 
 allocation_domain(iso,t,p1,f1,p2,p3,f2)$[
-    iso_t_active(iso,t)
-    and plant_output(iso,t,p2,f2)
-    and (abs(fuel_output_balanced(iso,t,p3,f2)) gt 0)
-    and fuel_map(f1,p3)
-    and ((pe(p1) and pe(p2)) or (pc(p1) and pc(p2)) or (ph(p1) and ph(p2)))
-    and ((fe(f2) and (pe(p1) or pc(p1))) or (fh(f2) and (ph(p1) or pc(p1))))
+    iso_t_active(iso,t)                         # country-year has at least some data
+    and plant_output(iso,t,p2,f2)               # this aggregate plant-output row must exist
+    and (abs(fuel_output_balanced(iso,t,p3,f2)) gt 0)   # this aggregate fuel-output row must exist
+    and fuel_map(f1,p3)                        # fuel f1 is allowed to explain bucket p3
+    and ((pe(p1) and pe(p2))                   # electricity plant can only map to electricity plant
+      or (pc(p1) and pc(p2))                   # CHP can only map to CHP
+      or (ph(p1) and ph(p2)))                  # heat plant can only map to heat plant
+    and ((fe(f2) and (pe(p1) or pc(p1)))       # electricity output only from electricity or CHP plants
+      or (fh(f2) and (ph(p1) or pc(p1))))      # heat output only from heat or CHP plants
     and (
-        plant_map(p1,p2,p3)
+        plant_map(p1,p2,p3)                    # preferred case: explicit manual mapping exists
         or (
-            pre_structural_infeasibility(iso,t,p2,p3,f2)
-            and plant_input(iso,t,p1,f1)
-            and sum(f1a$plant_input(iso,t,p1,f1a),1) gt 0
+            pre_structural_infeasibility(iso,t,p2,p3,f2)   # only activate fallback when data are structurally inconsistent
+            and plant_input(iso,t,p1,f1)                   # plant must actually consume this fuel
+            and sum(f1a$plant_input(iso,t,p1,f1a),1) gt 0 # plant must have at least one observed fuel input
         )
     )
 ] = yes;
 
 * --- Domain support counts and unsupported-row flags -----------------------
+* how many detailed (p1,f1,p3) cells can explain this plant-output row.
 pre_domain_support_plant(iso,t,p2,f2) = 0;
-pre_domain_support_fuel(iso,t,p3,f2)  = 0;
-unsupported_plant_output(iso,t,p2,f2) = no;
-unsupported_fuel_output(iso,t,p3,f2)  = no;
-
 pre_domain_support_plant(iso,t,p2,f2)$[plant_output(iso,t,p2,f2)] =
     sum((p1,f1,p3)$allocation_domain(iso,t,p1,f1,p2,p3,f2), 1);
 
+* how many detailed (p1,f1,p2) cells can explain this fuel-output row.
+pre_domain_support_fuel(iso,t,p3,f2)  = 0;
 pre_domain_support_fuel(iso,t,p3,f2)$[(abs(fuel_output_balanced(iso,t,p3,f2)) gt 0)] =
     sum((p1,f1,p2)$allocation_domain(iso,t,p1,f1,p2,p3,f2), 1);
 
+* identify aggregate rows that exist in the data but have zero feasible support.
+unsupported_plant_output(iso,t,p2,f2) = no;
 unsupported_plant_output(iso,t,p2,f2)$[
        plant_output(iso,t,p2,f2)
    and not pre_domain_support_plant(iso,t,p2,f2)
 ] = yes;
 
+unsupported_fuel_output(iso,t,p3,f2)  = no;
 unsupported_fuel_output(iso,t,p3,f2)$[
        (abs(fuel_output_balanced(iso,t,p3,f2)) gt 0)
    and not pre_domain_support_fuel(iso,t,p3,f2)
@@ -415,14 +432,18 @@ unsupported_fuel_output(iso,t,p3,f2)$[
 plant_input_total(iso,t,p1)$iso_t_active(iso,t) = sum(f, abs(plant_input(iso,t,p1,f)));
 
 *------------------------------- SEED CONSTRUCTION -------------------------------*
-* The seed is the Bayesian prior for the allocation. It answers: "if we knew
-* nothing except efficiencies and total outputs, how would we distribute the
-* inputs?"  The seed is then disaggregated across the allocation domain in
-* proportion to observed plant_output shares.
-*
-* For CHP plants the seed output per commodity is further weighted by the
-* observed family-level output mix (electricity vs heat), so that high-
-* electricity-CHP countries naturally allocate more to electricity.
+$onText
+The seed is the prior allocation before optimization adjusts anything.
+
+seed_total_output(iso,t,p1,f1,f2):
+  total output of commodity f2 that fuel f1 at plant p1 would plausibly produce
+  based only on observed input and engineering efficiency.
+
+Logic by family:
+  - electricity plants: only electricity output
+  - heat plants: only heat output
+  - CHP plants: split between electricity and heat using observed aggregate mix
+$offText
 
 seed_total_output(iso,t,p1,f1,f2) = 0;
 
@@ -441,23 +462,34 @@ seed_total_output(iso,t,p1,f1,f2)$[plant_input(iso,t,p1,f1) and pc(p1) and (fe(f
  *total_plant_output(iso,t,f2)
  /max(1e-9, sum(ff$[(fe(ff) or fh(ff))], total_plant_output(iso,t,ff)));
 
-* --- Plant-output anchor targets -------------------------------------------
-* Each plant's target output equals its share of family-level input times the
-* family's total observed output. This preserves the relative scale of plants
-* within a family while anchoring to the published aggregate.
+*------------------------------- PLANT OUTPUT ANCHOR TARGETS -------------------------------*
+$onText
+seed_plant_output_target gives each detailed plant p1 a target total output.
+
+Interpretation:
+  Within each family, a plant's target total output is proportional to its
+  share of total observed input.
+
+This is not a hard constraint.
+It is a soft prior that discourages cases where a plant with large input gets
+almost no output while another plant with tiny input gets too much.
+$offText
 
 seed_plant_output_target(iso,t,p1) = 0;
 
+* Electricity family anchor
 seed_plant_output_target(iso,t,p1)$[(total_input(iso,t,p1) gt 0) and pe(p1)] =
     total_input(iso,t,p1)
  /max(1e-9, sum(p1a$pe(p1a), total_input(iso,t,p1a)))
  *sum((p2,f2)$[pe(p2) and fe(f2)], plant_output(iso,t,p2,f2));
 
+* Heat family anchor
 seed_plant_output_target(iso,t,p1)$[(total_input(iso,t,p1) gt 0) and ph(p1)] =
     total_input(iso,t,p1)
  /max(1e-9, sum(p1a$ph(p1a), total_input(iso,t,p1a)))
  *sum((p2,f2)$[ph(p2) and fh(f2)], plant_output(iso,t,p2,f2));
 
+* CHP family anchor
 seed_plant_output_target(iso,t,p1)$[(total_input(iso,t,p1) gt 0) and pc(p1)] =
     total_input(iso,t,p1)
  /max(1e-9, sum(p1a$pc(p1a), total_input(iso,t,p1a)))
@@ -465,7 +497,17 @@ seed_plant_output_target(iso,t,p1)$[(total_input(iso,t,p1) gt 0) and pc(p1)] =
 
 plant_anchor_weight(iso,t,p1) = 1;
 
-* --- Disaggregate seed across allocation domain ----------------------------
+*------------------------------- SEED DISAGGREGATION -------------------------------*
+$onText
+seed_allocated_output spreads the plant-level seed across all feasible
+(p2,p3) output combinations in the allocation domain.
+
+The split is proportional to plant_output(iso,t,p2,f2).
+So if a detailed plant p1 can feed multiple aggregate plant rows p2 for the
+same output commodity f2, the prior is distributed according to the observed
+aggregate plant-output structure.
+$offText
+
 seed_allocated_output(iso,t,p1,f1,p2,p3,f2) = 0;
 
 seed_allocated_output(iso,t,p1,f1,p2,p3,f2)$allocation_domain(iso,t,p1,f1,p2,p3,f2) =
@@ -485,12 +527,13 @@ seed_deviation_weight(iso,t,p1,f1,p2,p3,f2) = 0;
 
 seed_deviation_weight(iso,t,p1,f1,p2,p3,f2)$allocation_domain(iso,t,p1,f1,p2,p3,f2) =
     (1/max(10, abs(seed_allocated_output(iso,t,p1,f1,p2,p3,f2))))
- *(1
-      + 50$[not fuel_map(f1,p3)]
-      + 100$[not plant_map(p1,p2,p3)]
-      + 500$[total_input(iso,t,p1) eq 0]
-      + 1000*(1/(1 + abs(plant_input(iso,t,p1,f1))))
-      + 5000$[pre_structural_infeasibility(iso,t,p2,p3,f2)]
+ *(
+    1   # base penalty level
+    + 50$[not fuel_map(f1,p3)]  # fuel bucket not covered by manual fuel map
+    + 100$[not plant_map(p1,p2,p3)] # plant linkage not covered by manual plant map
+    + 500$[total_input(iso,t,p1) eq 0]  # plant has no total observed input
+    + 1000*(1/(1 + abs(plant_input(iso,t,p1,f1))))  # this specific fuel is weak or absent at this plant
+    + 5000$[pre_structural_infeasibility(iso,t,p2,p3,f2)]   # cell exists only because data are structurally inconsistent
     );
 
 *------------------------------- EXPORT BEFORE-SOLVE PACKAGE -------------------------------*
@@ -551,17 +594,31 @@ eq_plant_output_anchor_lower(iso,t,p1)$[(total_input(iso,t,p1) gt 0) and (seed_p
     =l= v_plant_output_deviation(iso,t,p1);
 
 * --- Objective --------------------------------------------------------------
+$onText
+The objective combines three soft goals:
+
+  1) Stay close to the seed allocation
+  2) Keep total output by plant close to the anchor target
+  3) Avoid violating efficiency bounds
+
+Priority hierarchy:
+  efficiency term   >> plant-anchor term >> seed-deviation term
+
+So:
+  - first preserve physical plausibility,
+  - then distribute output sensibly across plants,
+  - then use the seed as a tiebreaker.
+$offText
+
 eq_objective..
     z =e=
-* Term 1: seed deviation (low weight – tiebreaker between feasible solutions)
+* Term 1: stay close to seed at cell level
         penalty_weight_seed_deviation
       *sum((iso,t,p1,f1,p2,p3,f2)$[allocation_domain(iso,t,p1,f1,p2,p3,f2)], seed_deviation_weight(iso,t,p1,f1,p2,p3,f2)*v_seed_deviation(iso,t,p1,f1,p2,p3,f2))
-
-* Term 2: plant-anchor deviation (medium weight – distributional fairness)
+* Term 2: keep each plant's total output near its input-share target
       + penalty_weight_plant_anchor
       *sum((iso,t,p1)$[(total_input(iso,t,p1) gt 0) and (seed_plant_output_target(iso,t,p1) gt 0)], plant_anchor_weight(iso,t,p1)*v_plant_output_deviation(iso,t,p1))
-
-* Term 3: efficiency excess (very high weight – physical feasibility gate)
+* Term 3: strongly penalise efficiency violations
       + penalty_weight_efficiency_excess
       *sum((iso,t,p1)$[total_input(iso,t,p1) gt 0], 10*v_efficiency_excess(iso,t,p1));
 

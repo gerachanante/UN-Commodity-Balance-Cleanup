@@ -606,6 +606,17 @@ commodity_transformations <- merge(
 
 commodity_transformations[, `NCV-ID` := paste(ISO3, Year, ProdCode, `NCV type`, sep = "-")]
 
+# Change io where needed
+commodity_transformations[COMMODITY == "8000" & TRANSACTION %in% c(
+  "015GE","016GE","015GC","016GC",
+  "015ST","016ST"
+  ), io := "in"]
+
+commodity_transformations[COMMODITY == "9101" & TRANSACTION %in% c(
+  "015NE","016NE","015NC","016NC"
+), io := "in"]
+
+
 # ---------------------------------------------------------
 # ENFORCE FINAL SCHEMA (BOTH TABLES)
 # ---------------------------------------------------------

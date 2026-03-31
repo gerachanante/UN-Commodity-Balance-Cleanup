@@ -1,0 +1,137 @@
+
+--- Job UN Plants RAS.gms Start 03/31/26 03:55:58 53.3.0 68a37de8 WEX-WEI x86 64bit/MS Windows
+--- Applying:
+    C:\GAMS\53\gmsprmNT.txt
+--- GAMS Parameters defined
+    Input "T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance Cleanup\UN Plants RAS.gms"
+    PageSize 0
+    ScrDir "T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance Cleanup\225aj\"
+    SysDir C:\GAMS\53\
+    LogOption 3
+    AppendLog 1
+    ErrMsg 1
+    ErrorLog 99
+    IDE 1
+    LstTitleLeftAligned 1
+Licensee: Medium MUD - 10 User License                   G250926+0003Ac-GEN
+          Paul Scherrer Institute (PSI), OHSA/E01                    DC1320
+          C:\Users\escami_g\Documents\GAMS\gamslice.txt
+          b66dfe80-1921-41f9
+          v:2                                                              
+          The maintenance period of the license expires on Mar 14, 2028
+System information: 12 physical cores and 96 Gb physical memory detected
+GAMS 53.3.0   Copyright (C) 1987-2026 GAMS Development. All rights reserved
+--- Starting compilation
+--- UN Plants RAS.gms(30) 2 Mb
+--- $echo File T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance Cleanup\cplex.opt
+--- UN Plants RAS.gms(233) 3 Mb
+--- call gdxxrw.exe i=sets-UNRAS.xlsm o=sets.gdx Index=Summary!A15 maxDupeErrors=10 Acronyms=1 ALLUELS=Y
+
+GDXXRW           53.3.0 68a37de8 Mar 18, 2026          WEI x86 64bit/MS Window
+Input file : T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance Cleanup\sets-UNRAS.xlsm
+Output file: T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance Cleanup\sets.gdx
+Substituting Index
+Total time = 1484 Ms
+--- UN Plants RAS.gms(234) 3 Mb
+--- call gdxxrw.exe i=parameters-UNRAS.xlsm o=parameters.gdx Index=Summary!A15 maxDupeErrors=10 Acronyms=1 ALLUELS=Y squeeze=n
+
+GDXXRW           53.3.0 68a37de8 Mar 18, 2026          WEI x86 64bit/MS Window
+Input file : T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance Cleanup\parameters-UNRAS.xlsm
+Output file: T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance Cleanup\parameters.gdx
+Substituting Index
+Total time = 3125 Ms
+--- UN Plants RAS.gms(237) 3 Mb
+--- GDXin=T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance Cleanup\sets.gdx
+--- GDX File ($gdxLoad) T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance Cleanup\sets.gdx
+--- UN Plants RAS.gms(238) 3 Mb
+--- GDXin=T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance Cleanup\sets.gdx
+--- GDX File ($gdxLoadAll) T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance Cleanup\sets.gdx
+--- UN Plants RAS.gms(242) 3 Mb
+--- GDXin=T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance Cleanup\parameters.gdx
+--- GDX File ($gdxLoadAll) T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance Cleanup\parameters.gdx
+--- UN Plants RAS.gms(1109) 8 Mb
+--- call gdxdump ras-results.gdx output="allocated_output.csv" symb=post_out_allocated_output_export format=csv
+--- UN Plants RAS.gms(1110) 8 Mb
+--- call gdxdump ras-results.gdx output="allocated_output_full.csv" symb=post_out_allocated_output format=csv
+--- UN Plants RAS.gms(1118) 8 Mb
+--- Starting execution: elapsed 0:00:07.077
+--- UN Plants RAS.gms(702) 36 Mb
+--- GDX File (execute_unload) T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance Cleanup\ras-results.gdx
+--- UN Plants RAS.gms(899) 599 Mb
+--- Generating LP model plant_allocation
+--- UN Plants RAS.gms(874) 697 Mb  5 secs
+--- UN Plants RAS.gms(901) 699 Mb
+---   219,229 rows  231,182 columns  762,153 non-zeroes
+--- Range statistics (absolute non-zero finite values)
+--- RHS       [min, max] : [ 5.886E-04, 2.256E+07] - Zero values observed as well
+--- Bound     [min, max] : [        NA,        NA] - Zero values observed as well
+--- Matrix    [min, max] : [ 4.847E-08, 1.000E+06]
+--- Executing CPLEX (Solvelink=2): elapsed 0:00:21.529
+
+IBM ILOG CPLEX   53.3.0 68a37de8 Mar 18, 2026          WEI x86 64bit/MS Window
+
+--- GAMS/CPLEX licensed for continuous and discrete problems.
+
+Reading parameter(s) from "T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance Cleanup\cplex.opt"
+>>  iis 1
+>>  preind 0
+Finished reading from "T:\Latest datasets\01.Raw data needing conversion\UN.Commodity balance\UN Commodity Balance Cleanup\cplex.opt"
+
+--- GMO setup time: 0.00s
+--- Space for names approximately 55.73 Mb
+--- Use option 'names no' to turn use of names off
+--- GMO memory 85.93 Mb (peak 87.69 Mb)
+--- Dictionary memory 0.00 Mb
+--- Cplex 22.1.2.0 link memory 6.92 Mb (peak 73.96 Mb)
+--- Starting Cplex
+
+Version identifier: 22.1.2.0 | 2024-11-25 | 0edbb82fd
+CPXPARAM_Advance                                 0
+CPXPARAM_Preprocessing_Presolve                  0
+CPXPARAM_MIP_Display                             4
+CPXPARAM_MIP_Pool_Capacity                       0
+CPXPARAM_MIP_Tolerances_AbsMIPGap                0
+Parallel mode: deterministic, using up to 20 threads for concurrent optimization:
+ * Starting dual Simplex on 1 thread...
+ * Starting Barrier on 18 threads...
+ * Starting primal Simplex on 1 thread...
+
+Iteration log . . .
+Iteration:     1   Dual objective     =             0.000000
+Iteration:  1597   Dual objective     =          1840.902323
+Iteration:  3041   Dual objective     =       1407156.649072
+Iteration:  4364   Dual objective     =       7180865.177751
+Iteration:  5677   Dual objective     =      26196994.470530
+Iteration:  6956   Dual objective     =     276823433.094249
+Iteration:  8262   Dual objective     =    1217078648.891355
+Iteration:  9568   Dual objective     =    1419362795.341111
+Iteration: 10850   Dual objective     =    1895507487.791086
+Iteration: 12148   Dual objective     =    2025239748.602661
+Iteration: 13412   Dual objective     =    2388800258.019302
+Iteration: 14695   Dual objective     =    2528860026.348781
+Iteration: 15980   Dual objective     =    3249633142.488291
+Iteration: 17283   Dual objective     =    3645954954.206169
+Iteration: 18576   Dual objective     =    3960880495.515039
+Iteration: 19881   Dual objective     =    3987912116.941079
+Iteration: 21173   Dual objective     =    4061619704.430431
+Iteration: 22475   Dual objective     =    4090383731.546484
+Iteration: 23771   Dual objective     =    4111580206.925686
+Iteration: 25065   Dual objective     =    4154419886.783926
+Iteration: 26349   Dual objective     =    4239220227.278228
+Iteration: 27645   Dual objective     =    4265151905.112699
+Iteration: 28933   Dual objective     =    4293270171.402523
+Iteration: 30208   Dual objective     =    4370795435.291641
+Iteration: 31482   Dual objective     =    4418334180.038116
+Iteration: 32779   Dual objective     =    4487977208.851613
+Iteration: 34087   Dual objective     =    4544752654.801577
+Iteration: 35376   Dual objective     =    4614168970.855278
+Iteration: 36692   Dual objective     =    4717099899.651902
+Iteration: 37992   Dual objective     =    4764135743.328463
+Iteration: 39302   Dual objective     =    4823964373.398556
+Iteration: 40581   Dual objective     =    4904394644.411700
+Iteration: 41880   Dual objective     =    4945108585.035895
+Iteration: 43171   Dual objective     =    4984872241.660212
+Iteration: 44462   Dual objective     =    5052597213.121106
+Iteration: 45769   Dual objective     =    5116379248.814118
+Iteration: 47092   Dual objective     =    5215138349.770648
+Iteration: 48426   Dual objective     =    5288370919.281643

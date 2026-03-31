@@ -7,13 +7,6 @@
         {
             "codecMib": 106,
             "encoding": "UTF-8",
-            "file": "data_input.gdx",
-            "name": "data_input.gdx",
-            "type": "gdx"
-        },
-        {
-            "codecMib": 106,
-            "encoding": "UTF-8",
             "file": "ras-results.gdx",
             "name": "ras-results.gdx",
             "type": "gdx"
@@ -40,6 +33,6 @@
     "path": ".",
     "pf": "",
     "projectType": 1,
-    "timestamp": "2026-03-30T21:57:22.677",
+    "timestamp": "2026-03-31T03:55:57.936",
     "workDir": "."
 }

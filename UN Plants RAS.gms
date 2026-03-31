@@ -72,25 +72,26 @@ Sets
     unsupported_fuel_output(iso,t,p3,f2)  "fuel-output rows with no feasible allocation path"
     plant_missing_output(iso,t,p1)        "plants with input but zero allocated output after solve"
 
-*------------------------------- PRE-SOLVE ISSUE SETS -------------------------------*
-    pre_issue_raw_totals_mismatch(iso,t,f)       "raw plant totals and raw fuel totals differ"
-    pre_issue_scale_hits_lower_bound(iso,t,f)    "fuel-output scale factor hits lower clamp"
-    pre_issue_scale_hits_upper_bound(iso,t,f)    "fuel-output scale factor hits upper clamp"
+*------------------------------- PRE-SOLVE  SETS -------------------------------*
+    pre_raw_totals_mismatch(iso,t,f)       "raw plant totals and raw fuel totals differ"
+    pre_scale_hits_lower_bound(iso,t,f)    "fuel-output scale factor hits lower clamp"
+    pre_scale_hits_upper_bound(iso,t,f)    "fuel-output scale factor hits upper clamp"
 
-    pre_issue_plant_output_exceeds_feasible_energy(iso,t,p2,f2) "plant-output row exceeds same-family feasible energy"
-    pre_issue_fuel_output_exceeds_feasible_energy(iso,t,p3,f2)  "fuel-output row exceeds fuel-map feasible energy"
+    pre_plant_output_exceeds_feasible_energy(iso,t,p2,f2) "plant-output row exceeds same-family feasible energy"
+    pre_fuel_output_exceeds_feasible_energy(iso,t,p3,f2)  "fuel-output row exceeds fuel-map feasible energy"
 
-    pre_issue_no_same_family_support(iso,t,p2,p3,f2)     "no same-family input support exists for this output pair"
-    pre_issue_missing_fuel_map_support(iso,t,p2,p3,f2)   "same-family support exists but no fuel_map route exists"
-    pre_issue_missing_plant_map_support(iso,t,p2,p3,f2)  "same-family and fuel_map support exist but no plant_map route exists"
-    pre_issue_disconnected_mapping_chain(iso,t,p2,p3,f2) "fuel_map and plant_map both exist separately but not on one consistent chain"
+    pre_no_same_family_support(iso,t,p2,p3,f2)     "no same-family input support exists for this output pair"
+    pre_missing_fuel_map_support(iso,t,p2,p3,f2)   "same-family support exists but no fuel_map route exists"
+    pre_missing_plant_map_support(iso,t,p2,p3,f2)  "same-family and fuel_map support exist but no plant_map route exists"
+    pre_disconnected_mapping_chain(iso,t,p2,p3,f2) "fuel_map and plant_map both exist separately but not on one consistent chain"
 
-*------------------------------- POST-SOLVE ISSUE SETS -------------------------------*
-    post_issue_high_efficiency_slack(iso,t,p1)            "efficiency slack is materially positive"
-    post_issue_extreme_total_efficiency(iso,t,p1)         "realised total efficiency is implausibly high"
-    post_issue_non_manual_plant_map_used(iso,t,p2,p3,f2) "output pair receives flow through a non-manual plant_map route"
-    post_issue_heavy_structural_fallback_use(iso,t,p2,p3,f2) "output pair relies heavily on structural fallback"
-    post_issue_missing_output_after_solve(iso,t,p1)       "plant has input but zero allocated output after solve"
+*------------------------------- POST-SOLVE  SETS -------------------------------*
+    post_high_efficiency_slack(iso,t,p1)            "efficiency slack is materially positive"
+    post_extreme_total_efficiency(iso,t,p1)         "realised total efficiency is implausibly high"
+    post_non_manual_plant_map_used(iso,t,p2,p3,f2) "output pair receives flow through a non-manual plant_map route"
+    post_heavy_structural_fallback_use(iso,t,p2,p3,f2) "output pair relies heavily on structural fallback"
+    post_missing_output_after_solve(iso,t,p1)       "plant has input but zero allocated output after solve"
+
 ;
 
 
@@ -103,16 +104,19 @@ to size.
 Priority:
   1) fuel-balance mismatch should be very expensive
   2) efficiency violations should also be very expensive
-  3) plant-anchor deviations should guide distribution across plants
-  4) seed deviations should only act as a tiebreaker
+  3) plant-output shortfall for active feasible plants should be strongly penalised
+  4) plant-anchor deviations should guide distribution across plants
+  5) seed deviations should only act as a tiebreaker
 $offText
 
 Scalars
-    penalty_weight_seed_deviation "weight on relative seed deviation" /1/
-    penalty_weight_efficiency_excess "weight on relative efficiency slack" /1e4/
-    penalty_weight_plant_anchor "weight on relative plant-anchor deviation" /100/
-    consistency_tolerance "numerical tolerance for post-solve balance checks (absolute units)" /1e-4/
-    penalty_weight_fuel_balance "weight on relative fuel-balance slack" /1e6/
+    penalty_weight_seed_deviation      "weight on relative seed deviation" /1/
+    penalty_weight_efficiency_excess   "weight on relative efficiency slack" /1e5/
+    penalty_weight_plant_anchor        "weight on relative two-sided plant-anchor deviation" /5e4/
+    penalty_weight_plant_shortfall     "weight on plant-output shortfall for active feasible plants" /5e5/
+    consistency_tolerance              "numerical tolerance for post-solve balance checks (absolute units)" /1e-4/
+    penalty_weight_fuel_balance        "weight on relative fuel-balance slack" /1e6/
+    min_output_target_share            "minimum share of anchor target that an active feasible plant should deliver" /0.10/
 ;
 
 *------------------------------- PARAMETERS -------------------------------*
@@ -143,13 +147,24 @@ Parameters
     seed_deviation_weight(iso,t,p1,f1,p2,p3,f2) "relative weight for seed deviation"
 
 * --- Plant output anchor targets --------------------------------------------*
+    seed_plant_output_target(iso,t,p1) "target total output for plant p1"
+    min_output_target(iso,t,p1)        "conservative minimum output target for active feasible plant"
     plant_anchor_weight(iso,t,p1)      "relative anchor weight"
     plant_input_total(iso,t,p1)        "total input by detailed plant"
 
 * --- Objective scaling factors ----------------------------------------------*
-    scale_seed_dev(iso,t,p1)     "scale for relative seed deviation"
-    scale_plant_anchor(iso,t,p1) "scale for relative plant-anchor deviation"
+    scale_seed_dev(iso,t,p1)        "scale for relative seed deviation"
+    scale_plant_anchor(iso,t,p1)    "scale for relative plant-anchor deviation"
+    scale_plant_shortfall(iso,t,p1) "scale for relative plant shortfall"
     scale_fuel_balance(iso,t,p3,f2) "scale for relative fuel-balance slack"
+
+* --- Pre-solve plant support -----------------------------------------------*
+    pre_domain_count_input_plant(iso,t,p1) "number of feasible allocation cells reachable from active input plant p1"
+
+* --- Post-solve structural fallback diagnostics -----------------------------*
+    post_structural_fallback_output(iso,t,p2,p3,f2) "allocated output using structural fallback"
+    post_total_pair_output(iso,t,p2,p3,f2)          "total allocated output for output pair"
+    post_structural_fallback_share(iso,t,p2,p3,f2)  "share of pair output using structural fallback"
 
 * --- Pre-solve support -------------------------------------------------------*
     pre_domain_support_plant_output(iso,t,p2,f2) "count of feasible allocation-domain links for a plant-output row"
@@ -173,9 +188,9 @@ Parameters
     pre_check_data_plant(iso,t,p2,f2) "plant-output rows likely driven by source-data inconsistency"
     pre_check_data_fuel(iso,t,p3,f2)  "fuel-output rows likely driven by source-data inconsistency"
 
-    pre_kpi_level_0 "count of level-0 issues"
-    pre_kpi_level_1 "count of level-1 issues"
-    pre_kpi_level_2 "count of level-2 issues"
+    pre_kpi_level_0 "count of level-0 s"
+    pre_kpi_level_1 "count of level-1 s"
+    pre_kpi_level_2 "count of level-2 s"
 
     pre_kpi_unsupported_plant_output "count of unsupported plant-output rows"
     pre_kpi_unsupported_fuel_output  "count of unsupported fuel-output rows"
@@ -203,7 +218,7 @@ Parameters
     post_efficiency_slack_share(iso,t,p1)    "efficiency slack relative to total input"
     post_realised_total_efficiency(iso,t,p1) "realised total efficiency"
 
-    post_kpi_level_3 "count of level-3 issues"
+    post_kpi_level_3 "count of level-3 s"
 
     post_kpi_max_plant_balance_residual       "max absolute plant-balance residual"
     post_kpi_max_fuel_balance_residual        "max absolute fuel-balance residual"
@@ -220,8 +235,8 @@ Parameters
     post_domain_count_input_plant(iso,t,p1) "number of feasible allocation cells reachable from active input plant p1"
     post_output_from_input_plant(iso,t,p1)  "total solved output allocated to input plant p1"
 
-    post_issue_missing_output_no_domain(iso,t,p1)  "active input plant has zero feasible allocation-domain support"
-    post_issue_missing_output_has_domain(iso,t,p1) "active input plant has feasible support but still receives zero solved output"
+    post_missing_output_no_domain(iso,t,p1)  "active input plant has zero feasible allocation-domain support"
+    post_missing_output_has_domain(iso,t,p1) "active input plant has feasible support but still receives zero solved output"
 
     post_kpi_missing_output_no_domain  "count of active input plants stranded by mappings / structure"
     post_kpi_missing_output_has_domain "count of active input plants ignored by the optimizer despite feasible support"
@@ -302,18 +317,18 @@ Diagnostic ladder before the solve:
   LEVEL 2  mapping root cause
 $offText
 
-* --- Reset sparse issue sets ------------------------------------------------*
-pre_issue_raw_totals_mismatch(iso,t,f) = no;
-pre_issue_scale_hits_lower_bound(iso,t,f) = no;
-pre_issue_scale_hits_upper_bound(iso,t,f) = no;
+* --- Reset sparse  sets ------------------------------------------------*
+pre_raw_totals_mismatch(iso,t,f) = no;
+pre_scale_hits_lower_bound(iso,t,f) = no;
+pre_scale_hits_upper_bound(iso,t,f) = no;
 
-pre_issue_plant_output_exceeds_feasible_energy(iso,t,p2,f2) = no;
-pre_issue_fuel_output_exceeds_feasible_energy(iso,t,p3,f2) = no;
+pre_plant_output_exceeds_feasible_energy(iso,t,p2,f2) = no;
+pre_fuel_output_exceeds_feasible_energy(iso,t,p3,f2) = no;
 
-pre_issue_no_same_family_support(iso,t,p2,p3,f2) = no;
-pre_issue_missing_fuel_map_support(iso,t,p2,p3,f2) = no;
-pre_issue_missing_plant_map_support(iso,t,p2,p3,f2) = no;
-pre_issue_disconnected_mapping_chain(iso,t,p2,p3,f2) = no;
+pre_no_same_family_support(iso,t,p2,p3,f2) = no;
+pre_missing_fuel_map_support(iso,t,p2,p3,f2) = no;
+pre_missing_plant_map_support(iso,t,p2,p3,f2) = no;
+pre_disconnected_mapping_chain(iso,t,p2,p3,f2) = no;
 
 * --- Reset support parameters -----------------------------------------------*
 pre_domain_support_plant_output(iso,t,p2,f2) = 0;
@@ -337,19 +352,19 @@ pre_raw_total_gap_share(iso,t,f)$[
     (total_plant_output(iso,t,f) - total_fuel_output(iso,t,f))
  /max(1e-9, max(abs(total_plant_output(iso,t,f)), abs(total_fuel_output(iso,t,f))));
 
-pre_issue_raw_totals_mismatch(iso,t,f)$[
+pre_raw_totals_mismatch(iso,t,f)$[
        iso_t_active(iso,t)
    and abs(total_plant_output(iso,t,f) - total_fuel_output(iso,t,f)) gt consistency_tolerance
 ] = yes;
 
-pre_issue_scale_hits_lower_bound(iso,t,f)$[
+pre_scale_hits_lower_bound(iso,t,f)$[
        iso_t_active(iso,t)
    and total_plant_output(iso,t,f) gt 0
    and total_fuel_output(iso,t,f) gt 0
    and fuel_output_scale(iso,t,f) le 0.2 + consistency_tolerance
 ] = yes;
 
-pre_issue_scale_hits_upper_bound(iso,t,f)$[
+pre_scale_hits_upper_bound(iso,t,f)$[
        iso_t_active(iso,t)
    and total_plant_output(iso,t,f) gt 0
    and total_fuel_output(iso,t,f) gt 0
@@ -357,13 +372,13 @@ pre_issue_scale_hits_upper_bound(iso,t,f)$[
 ] = yes;
 
 pre_scale_factor(iso,t,f)$[
-       pre_issue_scale_hits_lower_bound(iso,t,f)
-    or pre_issue_scale_hits_upper_bound(iso,t,f)
-    or pre_issue_raw_totals_mismatch(iso,t,f)
+       pre_scale_hits_lower_bound(iso,t,f)
+    or pre_scale_hits_upper_bound(iso,t,f)
+    or pre_raw_totals_mismatch(iso,t,f)
 ] = fuel_output_scale(iso,t,f);
 
 * --- Plant-output feasible envelope -----------------------------------------*
-pre_issue_plant_output_exceeds_feasible_energy(iso,t,p2,f2)$[
+pre_plant_output_exceeds_feasible_energy(iso,t,p2,f2)$[
        plant_output(iso,t,p2,f2)
    and (
         plant_output(iso,t,p2,f2)
@@ -386,7 +401,7 @@ pre_issue_plant_output_exceeds_feasible_energy(iso,t,p2,f2)$[
    )
 ] = yes;
 
-pre_plant_output_feasible_upper_bound(iso,t,p2,f2)$pre_issue_plant_output_exceeds_feasible_energy(iso,t,p2,f2) =
+pre_plant_output_feasible_upper_bound(iso,t,p2,f2)$pre_plant_output_exceeds_feasible_energy(iso,t,p2,f2) =
     sum(p1$[
            total_input(iso,t,p1) gt 0
        and (
@@ -402,12 +417,12 @@ pre_plant_output_feasible_upper_bound(iso,t,p2,f2)$pre_issue_plant_output_exceed
         )
     );
 
-pre_plant_output_feasible_gap(iso,t,p2,f2)$pre_issue_plant_output_exceeds_feasible_energy(iso,t,p2,f2) =
+pre_plant_output_feasible_gap(iso,t,p2,f2)$pre_plant_output_exceeds_feasible_energy(iso,t,p2,f2) =
     plant_output(iso,t,p2,f2)
   - pre_plant_output_feasible_upper_bound(iso,t,p2,f2);
 
 * --- Fuel-output feasible envelope ------------------------------------------*
-pre_issue_fuel_output_exceeds_feasible_energy(iso,t,p3,f2)$[
+pre_fuel_output_exceeds_feasible_energy(iso,t,p3,f2)$[
        abs(fuel_output_balanced(iso,t,p3,f2)) gt 0
    and (
         abs(fuel_output_balanced(iso,t,p3,f2))
@@ -427,7 +442,7 @@ pre_issue_fuel_output_exceeds_feasible_energy(iso,t,p3,f2)$[
    )
 ] = yes;
 
-pre_fuel_output_feasible_upper_bound(iso,t,p3,f2)$pre_issue_fuel_output_exceeds_feasible_energy(iso,t,p3,f2) =
+pre_fuel_output_feasible_upper_bound(iso,t,p3,f2)$pre_fuel_output_exceeds_feasible_energy(iso,t,p3,f2) =
     sum((p1,f1)$[
            plant_input(iso,t,p1,f1)
        and fuel_map(f1,p3)
@@ -440,7 +455,7 @@ pre_fuel_output_feasible_upper_bound(iso,t,p3,f2)$pre_issue_fuel_output_exceeds_
         )
     );
 
-pre_fuel_output_feasible_gap(iso,t,p3,f2)$pre_issue_fuel_output_exceeds_feasible_energy(iso,t,p3,f2) =
+pre_fuel_output_feasible_gap(iso,t,p3,f2)$pre_fuel_output_exceeds_feasible_energy(iso,t,p3,f2) =
     abs(fuel_output_balanced(iso,t,p3,f2))
   - pre_fuel_output_feasible_upper_bound(iso,t,p3,f2);
 
@@ -461,7 +476,7 @@ pre_structural_infeasibility(iso,t,p2,p3,f2)$[
    ], 1)
 ] = 1;
 
-pre_issue_no_same_family_support(iso,t,p2,p3,f2)$[
+pre_no_same_family_support(iso,t,p2,p3,f2)$[
        plant_output(iso,t,p2,f2)
    and abs(fuel_output_balanced(iso,t,p3,f2)) gt 0
    and not sum((p1,f1)$[
@@ -471,7 +486,7 @@ pre_issue_no_same_family_support(iso,t,p2,p3,f2)$[
    ], 1)
 ] = yes;
 
-pre_issue_missing_fuel_map_support(iso,t,p2,p3,f2)$[
+pre_missing_fuel_map_support(iso,t,p2,p3,f2)$[
        plant_output(iso,t,p2,f2)
    and abs(fuel_output_balanced(iso,t,p3,f2)) gt 0
    and sum((p1,f1)$[
@@ -487,7 +502,7 @@ pre_issue_missing_fuel_map_support(iso,t,p2,p3,f2)$[
    ], 1)
 ] = yes;
 
-pre_issue_missing_plant_map_support(iso,t,p2,p3,f2)$[
+pre_missing_plant_map_support(iso,t,p2,p3,f2)$[
        plant_output(iso,t,p2,f2)
    and abs(fuel_output_balanced(iso,t,p3,f2)) gt 0
    and sum((p1,f1)$[
@@ -505,7 +520,7 @@ pre_issue_missing_plant_map_support(iso,t,p2,p3,f2)$[
    ], 1)
 ] = yes;
 
-pre_issue_disconnected_mapping_chain(iso,t,p2,p3,f2)$[
+pre_disconnected_mapping_chain(iso,t,p2,p3,f2)$[
        plant_output(iso,t,p2,f2)
    and abs(fuel_output_balanced(iso,t,p3,f2)) gt 0
    and sum((p1,f1)$[
@@ -531,19 +546,19 @@ pre_issue_disconnected_mapping_chain(iso,t,p2,p3,f2)$[
 
 *------------------------------- PRE-SOLVE KPI SUMMARY -------------------------------*
 pre_kpi_level_0 =
-      sum((iso,t,f)$pre_issue_raw_totals_mismatch(iso,t,f), 1)
-    + sum((iso,t,f)$pre_issue_scale_hits_lower_bound(iso,t,f), 1)
-    + sum((iso,t,f)$pre_issue_scale_hits_upper_bound(iso,t,f), 1);
+      sum((iso,t,f)$pre_raw_totals_mismatch(iso,t,f), 1)
+    + sum((iso,t,f)$pre_scale_hits_lower_bound(iso,t,f), 1)
+    + sum((iso,t,f)$pre_scale_hits_upper_bound(iso,t,f), 1);
 
 pre_kpi_level_1 =
-      sum((iso,t,p2,f2)$pre_issue_plant_output_exceeds_feasible_energy(iso,t,p2,f2), 1)
-    + sum((iso,t,p3,f2)$pre_issue_fuel_output_exceeds_feasible_energy(iso,t,p3,f2), 1);
+      sum((iso,t,p2,f2)$pre_plant_output_exceeds_feasible_energy(iso,t,p2,f2), 1)
+    + sum((iso,t,p3,f2)$pre_fuel_output_exceeds_feasible_energy(iso,t,p3,f2), 1);
 
 pre_kpi_level_2 =
-      sum((iso,t,p2,p3,f2)$pre_issue_no_same_family_support(iso,t,p2,p3,f2), 1)
-    + sum((iso,t,p2,p3,f2)$pre_issue_missing_fuel_map_support(iso,t,p2,p3,f2), 1)
-    + sum((iso,t,p2,p3,f2)$pre_issue_missing_plant_map_support(iso,t,p2,p3,f2), 1)
-    + sum((iso,t,p2,p3,f2)$pre_issue_disconnected_mapping_chain(iso,t,p2,p3,f2), 1);
+      sum((iso,t,p2,p3,f2)$pre_no_same_family_support(iso,t,p2,p3,f2), 1)
+    + sum((iso,t,p2,p3,f2)$pre_missing_fuel_map_support(iso,t,p2,p3,f2), 1)
+    + sum((iso,t,p2,p3,f2)$pre_missing_plant_map_support(iso,t,p2,p3,f2), 1)
+    + sum((iso,t,p2,p3,f2)$pre_disconnected_mapping_chain(iso,t,p2,p3,f2), 1);
     
 
 *------------------------------- ALLOCATION DOMAIN -------------------------------*
@@ -695,6 +710,13 @@ pre_kpi_check_data_plant =
 pre_kpi_check_data_fuel =
     sum((iso,t,p3,f2)$[pre_check_data_fuel(iso,t,p3,f2) > 0], 1);
     
+
+* --- Input-plant domain support ---------------------------------------------*
+pre_domain_count_input_plant(iso,t,p1) = 0;
+
+pre_domain_count_input_plant(iso,t,p1)$[total_input(iso,t,p1) gt 0] =
+    sum((f1,p2,p3,f2)$allocation_domain(iso,t,p1,f1,p2,p3,f2), 1);
+    
 *------------------------------- EXPORT BEFORE-SOLVE PACKAGE -------------------------------*
 * Export only copy-paste candidate tables as CSV.
 * Everything else remains in %ResultsGDX% for troubleshooting.
@@ -723,6 +745,7 @@ seed_total_output(iso,t,p1,f1,f2)$[plant_input(iso,t,p1,f1) and pc(p1) and (fe(f
  /max(1e-9, sum(ff$[(fe(ff) or fh(ff))], total_plant_output(iso,t,ff)));
 
 
+
 *------------------------------- PLANT OUTPUT ANCHOR TARGETS -------------------------------*
 seed_plant_output_target(iso,t,p1) = 0;
 
@@ -744,11 +767,30 @@ seed_plant_output_target(iso,t,p1)$[(total_input(iso,t,p1) gt 0) and pc(p1)] =
  / max(1e-9, sum(p1a$pc(p1a), total_input(iso,t,p1a)))
  * sum((p2,f2)$[pc(p2) and (fe(f2) or fh(f2))], plant_output(iso,t,p2,f2));
 
+* Conservative minimum target:
+* only for plants that actually have feasible allocation routes
+min_output_target(iso,t,p1) = 0;
+
+min_output_target(iso,t,p1)$[
+       total_input(iso,t,p1) gt 0
+   and pre_domain_count_input_plant(iso,t,p1) gt 0
+] =
+    min_output_target_share * seed_plant_output_target(iso,t,p1);
+
+* Relative scaling
+scale_plant_anchor(iso,t,p1)$[seed_plant_output_target(iso,t,p1) gt 0] =
+    max(1, seed_plant_output_target(iso,t,p1));
+scale_plant_anchor(iso,t,p1)$[seed_plant_output_target(iso,t,p1) le 0] = 1;
+
+scale_plant_shortfall(iso,t,p1)$[min_output_target(iso,t,p1) gt 0] =
+    max(1, min_output_target(iso,t,p1));
+scale_plant_shortfall(iso,t,p1)$[min_output_target(iso,t,p1) le 0] = 1;
+
 * Anchor weight
 plant_anchor_weight(iso,t,p1)$[total_input(iso,t,p1) gt 0] =
     1 + log(1 + total_input(iso,t,p1));
-
 plant_anchor_weight(iso,t,p1)$[total_input(iso,t,p1) le 0] = 0;
+
 
 
 *------------------------------- SEED DISAGGREGATION -------------------------------*
@@ -793,16 +835,18 @@ scale_fuel_balance(iso,t,p3,f2)$[abs(fuel_output_balanced(iso,t,p3,f2)) le 0] = 
 *
 *abort$(sum((iso,t,p3,f2)$unsupported_fuel_output(iso,t,p3,f2), 1) > 0)
 *    "Unsupported fuel-output rows exist. Exact fuel-output balance cannot be guaranteed. Fix mappings or source data before solving.";
-    
 *------------------------------- VARIABLES -------------------------------*
 Positive Variables
     v_allocated_output(iso,t,p1,f1,p2,p3,f2) "primary decision variable: energy flow attributed to input (p1,f1) and routed to output pair (p2,p3) as commodity f2 [same units as data]"
-    v_seed_deviation(iso,t,p1,f1,p2,p3,f2) "absolute deviation of the allocation from the seed at cell level; used as L1 penalty slack (upper + lower triangle linearisation)"
-    v_efficiency_excess(iso,t,p1) "slack above the total-output efficiency bound for plant p1; kept in the model so the LP is always feasible, but penalised very heavily so any positive value flags a data anomaly"
-    v_plant_output_deviation(iso,t,p1) "absolute deviation from the plant-level anchor target; L1 penalty slack analogous to v_seed_deviation"
-    v_fuel_balance_plus(iso,t,p3,f2)   "positive residual on fuel-output balance"
-    v_fuel_balance_minus(iso,t,p3,f2)  "negative residual on fuel-output balance"
+    v_seed_deviation(iso,t,p1,f1,p2,p3,f2)   "absolute deviation of the allocation from the seed at cell level"
+    v_efficiency_excess(iso,t,p1)             "slack above the total-output efficiency bound for plant p1"
+    v_plant_output_deviation(iso,t,p1)        "absolute deviation from the two-sided plant-level anchor target"
+    v_plant_output_shortfall(iso,t,p1)        "shortfall below a conservative minimum output target for active feasible plants"
+    v_fuel_balance_plus(iso,t,p3,f2)          "positive residual on fuel-output balance"
+    v_fuel_balance_minus(iso,t,p3,f2)         "negative residual on fuel-output balance"
 ;
+
+Variable z "weighted objective (minimise)";
 
 Variable z "weighted objective (minimise)";
 
@@ -812,14 +856,15 @@ v_allocated_output.l(iso,t,p1,f1,p2,p3,f2)$allocation_domain(iso,t,p1,f1,p2,p3,f
 
 *------------------------------- EQUATIONS -------------------------------*
 Equations
-    eq_plant_balance(iso,t,p2,f2) "exact closure on each plant-output row: allocated flows summed over all contributing inputs must equal the published plant_output value"
-    eq_fuel_balance(iso,t,p3,f2) "exact closure on each fuel-output bucket: allocated flows summed over all contributing inputs must equal fuel_output_balanced"
-    eq_total_output_efficiency_upper_bound(iso,t,p1) "total output ≤ thermodynamic cap × total input + slack; slack is penalised to enforce the bound softly"
-    eq_seed_deviation_upper(iso,t,p1,f1,p2,p3,f2) "upper half of the L1-deviation linearisation: v – seed ≤ dev"
-    eq_seed_deviation_lower(iso,t,p1,f1,p2,p3,f2) "lower half of the L1-deviation linearisation: seed – v ≤ dev"
-    eq_plant_output_anchor_upper(iso,t,p1) "upper half of plant-anchor L1 linearisation: output – target ≤ dev"
-    eq_plant_output_anchor_lower(iso,t,p1) "lower half of plant-anchor L1 linearisation: target – output ≤ dev"
-    eq_objective "weighted sum of all soft-constraint violations (minimise)"
+    eq_plant_balance(iso,t,p2,f2)                "exact closure on each plant-output row"
+    eq_fuel_balance(iso,t,p3,f2)                 "exact closure on each fuel-output bucket"
+    eq_total_output_efficiency_upper_bound(iso,t,p1) "total output ≤ efficiency cap × total input + slack"
+    eq_seed_deviation_upper(iso,t,p1,f1,p2,p3,f2)    "upper half of L1 seed deviation"
+    eq_seed_deviation_lower(iso,t,p1,f1,p2,p3,f2)    "lower half of L1 seed deviation"
+    eq_plant_output_anchor_upper(iso,t,p1)           "upper half of two-sided anchor deviation"
+    eq_plant_output_anchor_lower(iso,t,p1)           "lower half of two-sided anchor deviation"
+    eq_plant_output_shortfall(iso,t,p1)              "soft lower bound on output for active feasible plants"
+    eq_objective                                      "weighted sum of all soft-constraint violations"
 ;
 
 * --- Plant-output balance ---------------------------------------------------*
@@ -862,6 +907,17 @@ eq_plant_output_anchor_lower(iso,t,p1)$[(total_input(iso,t,p1) gt 0) and (seed_p
           v_allocated_output(iso,t,p1,f1,p2,p3,f2))
     =l= v_plant_output_deviation(iso,t,p1);
 
+* --- Soft lower bound for active feasible plants ----------------------------*
+eq_plant_output_shortfall(iso,t,p1)$[
+       total_input(iso,t,p1) gt 0
+   and pre_domain_count_input_plant(iso,t,p1) gt 0
+   and min_output_target(iso,t,p1) gt 0
+]..
+    sum((f1,p2,p3,f2)$allocation_domain(iso,t,p1,f1,p2,p3,f2),
+        v_allocated_output(iso,t,p1,f1,p2,p3,f2))
+    + v_plant_output_shortfall(iso,t,p1)
+    =g= min_output_target(iso,t,p1);
+    
 * --- Objective --------------------------------------------------------------*
 eq_objective..
     z =e=
@@ -871,16 +927,31 @@ eq_objective..
           * v_seed_deviation(iso,t,p1,f1,p2,p3,f2))
 
       + penalty_weight_plant_anchor
-      * sum((iso,t,p1)$[(total_input(iso,t,p1) gt 0) and (seed_plant_output_target(iso,t,p1) gt 0)],
-            plant_anchor_weight(iso,t,p1)
+      * sum((iso,t,p1)$[
+              total_input(iso,t,p1) gt 0
+          and seed_plant_output_target(iso,t,p1) gt 0
+        ],
+            (plant_anchor_weight(iso,t,p1) / scale_plant_anchor(iso,t,p1))
           * v_plant_output_deviation(iso,t,p1))
+
+      + penalty_weight_plant_shortfall
+      * sum((iso,t,p1)$[
+              total_input(iso,t,p1) gt 0
+          and pre_domain_count_input_plant(iso,t,p1) gt 0
+          and min_output_target(iso,t,p1) gt 0
+        ],
+            v_plant_output_shortfall(iso,t,p1)
+          / scale_plant_shortfall(iso,t,p1))
 
       + penalty_weight_efficiency_excess
       * sum((iso,t,p1)$[total_input(iso,t,p1) gt 0],
             v_efficiency_excess(iso,t,p1) / max(1, total_input(iso,t,p1)))
 
       + penalty_weight_fuel_balance
-      * sum((iso,t,p3,f2)$[abs(fuel_output_balanced(iso,t,p3,f2)) gt 0 and pre_domain_support_fuel_output(iso,t,p3,f2)],
+      * sum((iso,t,p3,f2)$[
+              abs(fuel_output_balanced(iso,t,p3,f2)) gt 0
+          and pre_domain_support_fuel_output(iso,t,p3,f2)
+        ],
             (v_fuel_balance_plus(iso,t,p3,f2) + v_fuel_balance_minus(iso,t,p3,f2))
           / scale_fuel_balance(iso,t,p3,f2));
 
@@ -920,25 +991,25 @@ post_domain_count_input_plant(iso,t,p1)$[total_input(iso,t,p1) gt 0] =
 post_output_from_input_plant(iso,t,p1)$[total_input(iso,t,p1) gt 0] =
     post_out_plant_output_total(iso,t,p1);
 
-post_issue_missing_output_no_domain(iso,t,p1) = 0;
-post_issue_missing_output_has_domain(iso,t,p1) = 0;
+post_missing_output_no_domain(iso,t,p1) = 0;
+post_missing_output_has_domain(iso,t,p1) = 0;
 
-post_issue_missing_output_no_domain(iso,t,p1)$[
+post_missing_output_no_domain(iso,t,p1)$[
        total_input(iso,t,p1) gt 0
    and post_domain_count_input_plant(iso,t,p1) = 0
 ] = 1;
 
-post_issue_missing_output_has_domain(iso,t,p1)$[
+post_missing_output_has_domain(iso,t,p1)$[
        total_input(iso,t,p1) gt 0
    and post_domain_count_input_plant(iso,t,p1) > 0
    and post_out_plant_output_total(iso,t,p1) le consistency_tolerance
 ] = 1;
 
 post_kpi_missing_output_no_domain =
-    sum((iso,t,p1)$[post_issue_missing_output_no_domain(iso,t,p1) > 0], 1);
+    sum((iso,t,p1)$[post_missing_output_no_domain(iso,t,p1) > 0], 1);
 
 post_kpi_missing_output_has_domain =
-    sum((iso,t,p1)$[post_issue_missing_output_has_domain(iso,t,p1) > 0], 1);
+    sum((iso,t,p1)$[post_missing_output_has_domain(iso,t,p1) > 0], 1);
 
 post_out_plant_output_electricity(iso,t,p1) =
     sum((f1,p2,p3,f2)$[allocation_domain(iso,t,p1,f1,p2,p3,f2) and fe(f2)],
@@ -990,57 +1061,61 @@ post_efficiency_slack_share(iso,t,p1)$[total_input(iso,t,p1) gt 0] =
 post_realised_total_efficiency(iso,t,p1)$[total_input(iso,t,p1) gt 0] =
     post_out_plant_efficiency_total(iso,t,p1);
 
-* --- Level-3 issue sets -----------------------------------------------------*
-post_issue_high_efficiency_slack(iso,t,p1) = no;
-post_issue_extreme_total_efficiency(iso,t,p1) = no;
-post_issue_non_manual_plant_map_used(iso,t,p2,p3,f2) = no;
-post_issue_heavy_structural_fallback_use(iso,t,p2,p3,f2) = no;
-post_issue_missing_output_after_solve(iso,t,p1) = no;
+* --- Level-3  sets -----------------------------------------------------*
+post_high_efficiency_slack(iso,t,p1) = no;
+post_extreme_total_efficiency(iso,t,p1) = no;
+post_non_manual_plant_map_used(iso,t,p2,p3,f2) = no;
+post_heavy_structural_fallback_use(iso,t,p2,p3,f2) = no;
+post_missing_output_after_solve(iso,t,p1) = no;
 plant_missing_output(iso,t,p1) = no;
 
-post_issue_high_efficiency_slack(iso,t,p1)$[
+post_high_efficiency_slack(iso,t,p1)$[
        total_input(iso,t,p1) gt 0
    and v_efficiency_excess.l(iso,t,p1) gt 0.10*total_input(iso,t,p1)
 ] = yes;
 
-post_issue_extreme_total_efficiency(iso,t,p1)$[
+post_extreme_total_efficiency(iso,t,p1)$[
        total_input(iso,t,p1) gt 0
    and post_out_plant_efficiency_total(iso,t,p1) gt 1.5
 ] = yes;
 
-post_issue_non_manual_plant_map_used(iso,t,p2,p3,f2)$[
+post_non_manual_plant_map_used(iso,t,p2,p3,f2)$[
        sum((p1,f1)$[
               allocation_domain(iso,t,p1,f1,p2,p3,f2)
           and not plant_map(p1,p2,p3)
        ], post_out_allocated_output(iso,t,p1,f1,p2,p3,f2)) gt consistency_tolerance
 ] = yes;
 
-post_issue_heavy_structural_fallback_use(iso,t,p2,p3,f2)$[
-       sum((p1,f1)$[
-              allocation_domain(iso,t,p1,f1,p2,p3,f2)
-          and pre_structural_infeasibility(iso,t,p2,p3,f2)
-       ], post_out_allocated_output(iso,t,p1,f1,p2,p3,f2))
-    / max(1e-9,
-          sum((p1,f1)$allocation_domain(iso,t,p1,f1,p2,p3,f2),
-              post_out_allocated_output(iso,t,p1,f1,p2,p3,f2)))
-       gt 0.50
-] = yes;
+post_structural_fallback_output(iso,t,p2,p3,f2) =
+    sum((p1,f1)$[
+           allocation_domain(iso,t,p1,f1,p2,p3,f2)
+       and pre_structural_infeasibility(iso,t,p2,p3,f2)
+    ],
+        post_out_allocated_output(iso,t,p1,f1,p2,p3,f2));
+
+post_total_pair_output(iso,t,p2,p3,f2) =
+    sum((p1,f1)$allocation_domain(iso,t,p1,f1,p2,p3,f2),
+        post_out_allocated_output(iso,t,p1,f1,p2,p3,f2));
+
+post_structural_fallback_share(iso,t,p2,p3,f2)$[post_total_pair_output(iso,t,p2,p3,f2) gt 1e-9] =
+    post_structural_fallback_output(iso,t,p2,p3,f2)
+  / post_total_pair_output(iso,t,p2,p3,f2);
 
 plant_missing_output(iso,t,p1)$[
        total_input(iso,t,p1) gt 0
    and post_out_plant_output_total(iso,t,p1) le consistency_tolerance
 ] = yes;
 
-post_issue_missing_output_after_solve(iso,t,p1)$plant_missing_output(iso,t,p1) = yes;
+post_missing_output_after_solve(iso,t,p1)$plant_missing_output(iso,t,p1) = yes;
 
 * --- Top-line post-solve KPIs -----------------------------------------------*
 post_kpi_level_3 =
-      sum((iso,t,p1)$post_issue_high_efficiency_slack(iso,t,p1), 1)
-    + sum((iso,t,p1)$post_issue_extreme_total_efficiency(iso,t,p1), 1)
-    + sum((iso,t,p2,p3,f2)$post_issue_non_manual_plant_map_used(iso,t,p2,p3,f2), 1)
-    + sum((iso,t,p2,p3,f2)$post_issue_heavy_structural_fallback_use(iso,t,p2,p3,f2), 1)
-    + sum((iso,t,p1)$[post_issue_missing_output_no_domain(iso,t,p1) > 0], 1)
-    + sum((iso,t,p1)$[post_issue_missing_output_has_domain(iso,t,p1) > 0], 1);
+      sum((iso,t,p1)$post_high_efficiency_slack(iso,t,p1), 1)
+    + sum((iso,t,p1)$post_extreme_total_efficiency(iso,t,p1), 1)
+    + sum((iso,t,p2,p3,f2)$post_non_manual_plant_map_used(iso,t,p2,p3,f2), 1)
+    + sum((iso,t,p2,p3,f2)$post_heavy_structural_fallback_use(iso,t,p2,p3,f2), 1)
+    + sum((iso,t,p1)$[post_missing_output_no_domain(iso,t,p1) > 0], 1)
+    + sum((iso,t,p1)$[post_missing_output_has_domain(iso,t,p1) > 0], 1);
 
 post_kpi_max_plant_balance_residual =
     smax((iso,t,p2,f2)$plant_output(iso,t,p2,f2),

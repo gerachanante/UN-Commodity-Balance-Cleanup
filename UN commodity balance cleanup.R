@@ -112,9 +112,7 @@ products[, `:=`(
   Product                    = as.character(Product),
   `Source type`              = as.character(`Source type`),
   `UNSD NCV (TJ/kt)`         = as.numeric(`UNSD NCV (TJ/kt)`),
-  `DNI UNSD Production`      = as.character(`DNI UNSD Production`),
-  `UNSD production recoding` = as.character(`UNSD production recoding`),
-  `UNSD receipts recoding`   = as.character(`UNSD receipts recoding`)
+  `DNI UNSD Production`      = as.character(`DNI UNSD Production`)
 )]
 
 # Clean transaction metadata
@@ -200,9 +198,7 @@ products <- products[
     Product                    = first_non_blank(Product),
     `Source type`              = first_non_blank(`Source type`),
     `UNSD NCV (TJ/kt)`         = suppressWarnings(as.numeric(first_non_blank(`UNSD NCV (TJ/kt)`))),
-    `DNI UNSD Production`      = first_non_blank(`DNI UNSD Production`),
-    `UNSD production recoding` = first_non_blank(`UNSD production recoding`),
-    `UNSD receipts recoding`   = first_non_blank(`UNSD receipts recoding`)
+    `DNI UNSD Production`      = first_non_blank(`DNI UNSD Production`)
   ),
   by = .(ProdCode)
 ]
@@ -608,12 +604,12 @@ commodity_transformations[, `NCV-ID` := paste(ISO3, Year, ProdCode, `NCV type`, 
 
 # Change io where needed
 commodity_transformations[COMMODITY == "8000" & TRANSACTION %in% c(
-  "015GE","016GE","015GC","016GC",
-  "015ST","016ST"
+  "015GE","016GE","015GC","016GC", # geothermal
+  "015ST","016ST" # solar thermal
   ), io := "in"]
 
 commodity_transformations[COMMODITY == "9101" & TRANSACTION %in% c(
-  "015NE","016NE","015NC","016NC"
+  "015NE","016NE","015NC","016NC","015NH","016NH" # nuclear
 ), io := "in"]
 
 

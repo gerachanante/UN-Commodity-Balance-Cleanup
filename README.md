@@ -5,7 +5,7 @@ It combines raw UN commodity balance data with several Excel lookup tables to:
 - standardize products, transactions, units, and country codes,
 - apply sign logic consistently (including commodity-level overrides),
 - attach metadata and calorific values (NCVs),
-- convert physical quantities into energy terms,
+- convert physical quantities into energy quantities,
 - generate additional transformed rows from rule-based mappings,
 - prepare structured inputs for RAS optimisation,
 - and rebuild a final consistent energy balance after optimisation.
@@ -61,7 +61,7 @@ The script loads **nine** source objects:
 
 ## 4. Type Stabilization
 
-All tables are explicitly cast before any operations:
+All tables are built before any operations:
 
 - keys → `character`
 - values → `numeric`
@@ -73,7 +73,7 @@ This prevents silent join failures across heterogeneous sources.
 
 ## 5. Empty Row Removal
 
-Rows with no meaningful content across key fields are removed.
+Rows without meaningful content are removed.
 
 This is distinct from removing zero flows (handled later).
 
